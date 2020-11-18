@@ -3,7 +3,7 @@ use std::io::{self, prelude::*};
 use std::env;
 use std::process;
 
-use chat_rs::{ChatStream, MSG_LENGTH};
+use chat_rs::{ChatStream, Msg, MSG_LENGTH};
 
 fn main() -> io::Result<()> {
     let address = env::args()
@@ -25,7 +25,7 @@ fn main() -> io::Result<()> {
         });
     
     let mut stream = ChatStream{stream};
-    stream.send_data(1, &nick)?;
+    stream.send_data(Msg::NickChange(nick.clone()))?;
     println!("Connected.");
     
     loop {
@@ -36,8 +36,7 @@ fn main() -> io::Result<()> {
             break;
         }
         
-        let code = 0;
-        stream.send_data(code, &string)?;
+        stream.send_data(Msg::UserMsg(string))?;
     };
     io::Result::Ok(())
 }
