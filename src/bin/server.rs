@@ -1,12 +1,14 @@
 use std::net::{TcpStream, TcpListener};
-use std::io::{self, prelude::*};
+use std::io;
 use std::env;
 use std::process;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use chat_rs::{User, MSG_LENGTH};
+use chat_rs::{ChatStream, User, MSG_LENGTH};
+
+const MAX_USERS: usize = 50;
 
 fn main() -> io::Result<()>{
     let address = env::args()
@@ -23,7 +25,7 @@ fn main() -> io::Result<()>{
             process::exit(1);
         });
     
-    let users = Arc::from(Mutex::from(HashSet::with_capacity(50)));
+    let users = Arc::from(Mutex::from(HashSet::with_capacity(MAX_USERS)));
     
     for stream in listener.incoming() {
         match stream {
@@ -36,20 +38,31 @@ fn main() -> io::Result<()>{
     Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
+fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
+    let mut stream = ChatStream{stream};
+
     thread::spawn(move || {
         let peer_address = stream.peer_addr().unwrap();
+
         let mut buffer = [0u8; MSG_LENGTH];
 
-        let nick = match receive_data(&mut buffer, &mut stream) {
+        let nick = match stream.receive_data(&mut buffer) {
             Ok((_, nick)) => nick,
             Err(_) => {
-                println!("{} disconnected.", peer_address);
+                println!("{} aborted on nick.", peer_address);
                 return
             }
         };
 
-        println!("Connection from {}, nick {}", peer_address, nick);
+        if users.lock().unwrap().len() >= MAX_USERS {
+            stream.send_data(255, "Too many users.")
+                .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+            println!("Rejected {}, too many users", peer_address);
+            return
+        } else {
+            stream.send_data(254, "Success").unwrap();
+            println!("Connection from {}, nick {}", peer_address, nick);
+        }
 
         let temp_user = User {
             nick: nick.clone(),
@@ -60,7 +73,7 @@ fn handle_connection(mut stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
 
 
         loop {
-            let (code, string) = match receive_data(&mut buffer, &mut stream) {
+            let (code, string) = match stream.receive_data(&mut buffer) {
                 Ok((code, string)) => (code, string),
                 Err(_) => {
                     println!("{} [{}] disconnected.", peer_address, nick);
@@ -75,17 +88,4 @@ fn handle_connection(mut stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
             println!("Msg({}): [{}]: {}", code, nick, string);
         }
     });
-}
-
-fn receive_data(buffer: &mut [u8], stream: &mut TcpStream) -> io::Result<(u8, String)> {
-    let bytes_read = match stream.read(buffer) {
-        Ok(num) if num > 0 => num,
-        Ok(_) => return Err(io::Error::new(io::ErrorKind::Other, "Received empty message")),
-        Err(err) => return Err(err)
-    };
-
-    let code = buffer[0];
-    let string = String::from_utf8_lossy(&buffer[1..bytes_read]).to_string();
-
-    Ok((code, string))
 }
