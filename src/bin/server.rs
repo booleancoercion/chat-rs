@@ -63,7 +63,7 @@ fn handle_connection(mut stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
             let (code, string) = match receive_data(&mut buffer, &mut stream) {
                 Ok((code, string)) => (code, string),
                 Err(_) => {
-                    println!("{} disconnected.", peer_address);
+                    println!("{} [{}] disconnected.", peer_address, nick);
                     users.lock().unwrap().remove(&User {
                         nick,
                         stream
