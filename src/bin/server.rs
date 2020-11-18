@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use chat_rs::{ChatStream, User, MSG_LENGTH};
+use chat_rs::{ChatStream, User, Msg, MSG_LENGTH};
 
 const MAX_USERS: usize = 50;
 
@@ -47,20 +47,20 @@ fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
         let mut buffer = [0u8; MSG_LENGTH];
 
         let nick = match stream.receive_data(&mut buffer) {
-            Ok((_, nick)) => nick,
-            Err(_) => {
+            Ok(Msg::NickChange(nick)) => nick,
+            _ => {
                 println!("{} aborted on nick.", peer_address);
                 return
             }
         };
 
         if users.lock().unwrap().len() >= MAX_USERS {
-            stream.send_data(255, "Too many users.")
+            stream.send_data(Msg::TooManyUsers)
                 .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
             println!("Rejected {}, too many users", peer_address);
             return
         } else {
-            stream.send_data(254, "Success").unwrap();
+            stream.send_data(Msg::ConnectionAccepted).unwrap();
             println!("Connection from {}, nick {}", peer_address, nick);
         }
 
@@ -73,10 +73,10 @@ fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
 
 
         loop {
-            let (code, string) = match stream.receive_data(&mut buffer) {
-                Ok((code, string)) => (code, string),
-                Err(_) => {
-                    println!("{} [{}] disconnected.", peer_address, nick);
+            let msg = match stream.receive_data(&mut buffer) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    println!("{} [{}] disconnected with error {}.", peer_address, nick, e.to_string());
                     users.lock().unwrap().remove(&User {
                         nick,
                         stream
@@ -85,7 +85,7 @@ fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
                 }
             };
 
-            println!("Msg({}): [{}]: {}", code, nick, string);
+            println!("Msg({}): [{}]: {}", msg.code(), nick, msg.string());
         }
     });
 }
