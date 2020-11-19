@@ -50,7 +50,11 @@ fn handle_connection(mut stream: ChatStream, users: Arc<Mutex<HashMap<String, Ch
             .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
         println!("Rejected {}, too many users", peer_address);
         return
+    } else if let Err(e) = stream.send_data(Msg::ConnectionAccepted) {
+        println!("Error accepting {}: {}", peer_address, e.to_string());
+        return
     }
+        
 
     let mut buffer = [0; MSG_LENGTH];
 
@@ -62,7 +66,6 @@ fn handle_connection(mut stream: ChatStream, users: Arc<Mutex<HashMap<String, Ch
         }
     };
 
-    stream.send_data(Msg::ConnectionAccepted).unwrap();
     println!("Connection from {}, nick {}", peer_address, nick);
 
     let stream_clone = stream.try_clone()
