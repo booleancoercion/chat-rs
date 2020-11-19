@@ -25,8 +25,17 @@ fn main() -> io::Result<()> {
         });
     
     let mut stream = ChatStream(stream);
+    let mut buffer = [0u8; MSG_LENGTH];
+    
+    match stream.receive_data(&mut buffer) {
+        Ok(Msg::ConnectionAccepted) => println!("Connected. Sending nickname..."),
+        Ok(msg) => println!("Server refused connection: {}", msg.string()),
+        Err(e) => println!("Error connecting to server: {}", e.to_string())
+    }
+
     stream.send_data(Msg::NickChange(nick.clone()))?;
     println!("Connected.");
+    
     
     loop {
         let string = prompt()?;
