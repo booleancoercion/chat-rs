@@ -45,7 +45,14 @@ fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
     let mut stream = ChatStream{stream};
     let peer_address = stream.peer_addr().unwrap();
 
-    let mut buffer = [0u8; MSG_LENGTH];
+    if users.lock().unwrap().len() >= MAX_USERS {
+        stream.send_data(Msg::TooManyUsers)
+            .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+        println!("Rejected {}, too many users", peer_address);
+        return
+    }
+
+    let mut buffer = Vec::with_capacity(MSG_LENGTH);
 
     let nick = match stream.receive_data(&mut buffer) {
         Ok(Msg::NickChange(nick)) => nick,
@@ -55,15 +62,8 @@ fn handle_connection(stream: TcpStream, users: Arc<Mutex<HashSet<User>>>) {
         }
     };
 
-    if users.lock().unwrap().len() >= MAX_USERS {
-        stream.send_data(Msg::TooManyUsers)
-            .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
-        println!("Rejected {}, too many users", peer_address);
-        return
-    } else {
-        stream.send_data(Msg::ConnectionAccepted).unwrap();
-        println!("Connection from {}, nick {}", peer_address, nick);
-    }
+    stream.send_data(Msg::ConnectionAccepted).unwrap();
+    println!("Connection from {}, nick {}", peer_address, nick);
 
     let temp_user = User {
         nick: nick.clone(),
