@@ -29,8 +29,7 @@ fn main() -> io::Result<()> {
     println!("Connected.");
     
     loop {
-        let mut string = prompt()?;
-        string.truncate(MSG_LENGTH - 1);
+        let string = prompt()?;
 
         if string == "exit" {
             break;
