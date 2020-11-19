@@ -24,7 +24,7 @@ fn main() -> io::Result<()> {
             process::exit(1);
         });
     
-    let mut stream = ChatStream{stream};
+    let mut stream = ChatStream(stream);
     stream.send_data(Msg::NickChange(nick.clone()))?;
     println!("Connected.");
     
