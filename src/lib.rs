@@ -1,47 +1,9 @@
-use std::hash::Hash;
 use std::io::{self, prelude::*};
 use std::net::{SocketAddr, TcpStream};
 
 pub const MSG_LENGTH: usize = 2048;
 
-#[derive(Eq, Hash)]
-pub struct User {
-    pub nick: String,
-    pub stream: ChatStream
-}
-
-impl PartialEq for User {
-    fn eq(&self, other: &Self) -> bool {
-        self.stream == other.stream
-    }
-}
-
-impl User {
-    pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(User {
-            nick: self.nick.clone(),
-            stream: self.stream.try_clone()?
-        })
-    }
-}
-
-pub struct ChatStream {
-    pub stream: TcpStream
-}
-
-impl PartialEq for ChatStream {
-    fn eq(&self, other: &Self) -> bool {
-        self.stream.peer_addr().unwrap() == other.stream.peer_addr().unwrap()
-    }
-}
-
-impl Eq for ChatStream {}
-
-impl Hash for ChatStream {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.stream.peer_addr().unwrap().hash(state)
-    }
-}
+pub struct ChatStream(pub TcpStream);
 
 impl ChatStream {
     /// Send a message using the contained TcpStream, formatted according to
@@ -55,25 +17,21 @@ impl ChatStream {
         if buffer.len() > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Attempted to send an invalid-length message (too big)"));
         }
-        self.stream.write_all(&buffer)?;
-        self.stream.flush()?;
+        self.0.write_all(&buffer)?;
+        self.0.flush()?;
         io::Result::Ok(())
     }
 
-    /// Receive a BCMP formatted message, appending to the provided buffer
-    /// as a means for memory efficiency.
-    /// 
-    /// Note that the buffer will be emptied.
-    pub fn receive_data(&mut self, buffer: &mut Vec<u8>) -> io::Result<Msg> {
-        buffer.clear();
-
-        self.stream.read_exact(&mut buffer[0..3])?;
+    /// Receive a BCMP formatted message, using the provided buffer
+    /// as a means for memory efficiency. Buffer must be of length MSG_LENGTH at least.
+    pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
+        self.0.read_exact(&mut buffer[0..3])?;
         let (code, length) = Msg::parse_header(&buffer[0..3]);
+
         if length + 3 > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid message length (too big)"));
         }
-
-        self.stream.read_exact(&mut buffer[3..length+3])?;
+        self.0.read_exact(&mut buffer[3..length+3])?;
         let string = String::from_utf8_lossy(&buffer[3..length+3]).to_string();
     
         match Msg::from_parts(code, string) {
@@ -83,13 +41,11 @@ impl ChatStream {
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(Self {
-            stream: self.stream.try_clone()?
-        })
+        Ok(ChatStream(self.0.try_clone()?))
     }
 
     pub fn peer_addr(&self) -> io::Result<SocketAddr>{
-        self.stream.peer_addr()
+        self.0.peer_addr()
     }
 }
 
