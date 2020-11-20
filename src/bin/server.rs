@@ -45,14 +45,15 @@ fn main() -> io::Result<()> {
         info!("Received CTRL+C, exiting...");
 
         let users = uclone.lock().unwrap();
+        debug!("Acquired users lock");
         for (nick, stream) in users.iter() {
             debug!("Shutting down {}'s stream", nick);
             match stream.0.shutdown(Shutdown::Both) {
                 Ok(_) => trace!("Stream shutdown successful."),
                 Err(_) => trace!("Stream shutdown failed.")
             }
-            process::exit(0);
         }
+        process::exit(0);
     }).unwrap();
 
     let uclone = users.clone();
