@@ -1,3 +1,8 @@
+//! Crate containing the main logic for the rust implementation for BCMP.
+//!
+//! This crate contains useful structs, methods and enums for dealing with BCMP
+//! messages, e.g. `ChatStream` and `Msg`.
+
 use std::io::{self, prelude::*};
 use std::net::{SocketAddr, TcpStream};
 
