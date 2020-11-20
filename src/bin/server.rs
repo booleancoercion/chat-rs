@@ -84,17 +84,6 @@ fn handle_connection(mut stream: ChatStream, users: UsersType) {
     let peer_address = stream.peer_addr().unwrap();
     debug!("Incoming connection from {}", peer_address);
 
-    if users.lock().unwrap().len() >= MAX_USERS {
-        stream.send_data(Msg::ConnectionRejected("too many users".into()))
-            .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
-        info!("Rejected {}, too many users", peer_address);
-        return
-    } else if let Err(e) = stream.send_data(Msg::ConnectionAccepted) {
-        warn!("Error accepting {}: {}", peer_address, e.to_string());
-        return
-    }
-        
-
     let mut buffer = [0; MSG_LENGTH];
 
     let nick = match stream.receive_data(&mut buffer) {
@@ -104,6 +93,26 @@ fn handle_connection(mut stream: ChatStream, users: UsersType) {
             return
         }
     };
+
+    { // lock users temporarily
+        let userlock = users.lock().unwrap();
+        if userlock.len() >= MAX_USERS {
+            stream.send_data(Msg::ConnectionRejected("too many users".into()))
+                .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+            info!("Rejected {}, too many users", peer_address);
+            return
+        } else if userlock.contains_key(&nick) {
+            stream.send_data(Msg::ConnectionRejected("nick taken".into()))
+                .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+            info!("Rejected {}, nick taken", peer_address);
+            return
+        }
+    }
+
+    if let Err(e) = stream.send_data(Msg::ConnectionAccepted) {
+        warn!("Error accepting {}: {}", peer_address, e.to_string());
+        return
+    }
 
     info!("Connection successful from {}, nick {}", peer_address, nick);
 
