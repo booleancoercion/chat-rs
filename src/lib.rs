@@ -1,8 +1,14 @@
 use std::io::{self, prelude::*};
 use std::net::{SocketAddr, TcpStream};
 
+/// The default maximum message length used between the
+/// client and the server, according to BCMP.
 pub const MSG_LENGTH: usize = 2048;
 
+/// A struct representing a TcpStream belonging to a chat session.
+/// This struct contains methods useful for sending and receiving information
+/// using BCMP, and is highly recommended for working consistently between the
+/// server and the client.
 pub struct ChatStream(pub TcpStream);
 
 impl ChatStream {
@@ -40,15 +46,18 @@ impl ChatStream {
         }
     }
 
+    /// Tries to clone itself using TcpStream::try_clone() on the underlying stream.
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(ChatStream(self.0.try_clone()?))
     }
 
+    /// Convenience method for TcpStream::peer_addr()
     pub fn peer_addr(&self) -> io::Result<SocketAddr>{
         self.0.peer_addr()
     }
 }
 
+/// An enum representing a Server/Client message
 #[derive(Clone)]
 pub enum Msg {
     UserMsg(String),
@@ -58,6 +67,7 @@ pub enum Msg {
 }
 
 impl Msg {
+    /// Returns the numeral code of the message type.
     pub fn code(&self) -> u8 { // if you change this, CHANGE FROM_PARTS AND STRING TOO!!
         use Msg::*;
         match self {
@@ -68,6 +78,8 @@ impl Msg {
         }
     }
 
+    /// Constructs a new Msg from a code and a string.
+    /// Msg's that don't have a string will ignore the passed string.
     pub fn from_parts(code: u8, string: String) -> Option<Self> {
         use Msg::*;
         match code {
@@ -79,6 +91,9 @@ impl Msg {
         }
     }
 
+    /// Returns the underlying string of the message.
+    /// This method also contains defaults for string-less messages,
+    /// e.g. Msg::ConnectionAccepted.
     pub fn string(&self) -> String {
         match self {
             Self::UserMsg(s) => s,
@@ -88,6 +103,7 @@ impl Msg {
         }.to_string()
     }
 
+    /// Parses a raw BCMP header into a message code and length. 
     pub fn parse_header(header: &[u8]) -> (u8, usize) {
         let code = header[0];
         let length = u16::from_le_bytes([header[1], header[2]]) as usize;
@@ -95,6 +111,7 @@ impl Msg {
         (code, length)
     }
 
+    /// Encodes the header of the current message.
     pub fn encode_header(&self) -> [u8; 3] {
         let mut out = [0u8; 3];
         out[0] = self.code();
