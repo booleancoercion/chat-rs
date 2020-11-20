@@ -49,12 +49,15 @@ fn main() -> io::Result<()> {
     io::Result::Ok(())
 }
 
+
+/// Prompts the user for a string via stdin, **without** a message.
 fn prompt() -> io::Result<String> {
     let mut string = String::with_capacity(MSG_LENGTH + 1);
     io::stdin().read_line(&mut string)?;
     Ok(string.trim().to_string())
 }
 
+/// Prompts the user for a string via stdin, **with** a message.
 fn prompt_msg(string: &str) -> io::Result<String> {
     print!("{}", string);
     io::stdout().flush()?;
