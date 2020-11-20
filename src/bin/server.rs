@@ -51,14 +51,14 @@ fn main() -> io::Result<()> {
                 Ok(_) => trace!("Stream shutdown successful."),
                 Err(_) => trace!("Stream shutdown failed.")
             }
+            process::exit(0);
         }
     }).unwrap();
 
     let uclone = users.clone();
     accept_connections(listener, uclone, running.clone());
 
-    drop(users.lock().unwrap()); // ensures that main waits for ctrlc handler to finish
-    Ok(())
+    loop {} // ensures that main waits for ctrlc handler to finish
 }
 
 fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>) {
