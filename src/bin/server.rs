@@ -46,7 +46,7 @@ fn handle_connection(mut stream: ChatStream, users: Arc<Mutex<HashMap<String, Ch
     let peer_address = stream.peer_addr().unwrap();
 
     if users.lock().unwrap().len() >= MAX_USERS {
-        stream.send_data(Msg::TooManyUsers)
+        stream.send_data(Msg::ConnectionRejected("too many users".into()))
             .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
         println!("Rejected {}, too many users", peer_address);
         return

@@ -105,7 +105,7 @@ impl ChatStream {
 pub enum Msg {
     UserMsg(String),
     NickChange(String),
-    TooManyUsers,
+    ConnectionRejected(String),
     ConnectionAccepted,
 }
 
@@ -117,7 +117,7 @@ impl Msg {
             UserMsg(_) => 0,
             NickChange(_) => 1,
             ConnectionAccepted => 254,
-            TooManyUsers => 255,
+            ConnectionRejected(_) => 255,
         }
     }
 
@@ -129,7 +129,7 @@ impl Msg {
             0 => Some(UserMsg(string)),
             1 => Some(NickChange(string)),
             254 => Some(ConnectionAccepted),
-            255 => Some(TooManyUsers),
+            255 => Some(ConnectionRejected(string)),
             _ => None
         }
     }
@@ -141,7 +141,7 @@ impl Msg {
         match self {
             Self::UserMsg(s) => s,
             Self::NickChange(s) => s,
-            Self::TooManyUsers => "too many users",
+            Self::ConnectionRejected(s) => s,
             Self::ConnectionAccepted => "connection accepted"
         }.to_string()
     }
