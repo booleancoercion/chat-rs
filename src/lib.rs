@@ -5,14 +5,14 @@ use std::net::{SocketAddr, TcpStream};
 /// client and the server, according to BCMP.
 pub const MSG_LENGTH: usize = 2048;
 
-/// A struct representing a TcpStream belonging to a chat session.
+/// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
 /// using BCMP, and is highly recommended for working consistently between the
 /// server and the client.
 pub struct ChatStream(pub TcpStream);
 
 impl ChatStream {
-    /// Send a message using the contained TcpStream, formatted according to
+    /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
     /// successful.
     pub fn send_data(&mut self, msg: Msg) -> io::Result<()> {
@@ -29,7 +29,7 @@ impl ChatStream {
     }
 
     /// Receive a BCMP formatted message, using the provided buffer
-    /// as a means for memory efficiency. Buffer must be of length MSG_LENGTH at least.
+    /// as a means for memory efficiency. Buffer must be of length `MSG_LENGTH` at least.
     pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
         self.0.read_exact(&mut buffer[0..3])?;
         let (code, length) = Msg::parse_header(&buffer[0..3]);
@@ -46,12 +46,12 @@ impl ChatStream {
         }
     }
 
-    /// Tries to clone itself using TcpStream::try_clone() on the underlying stream.
+    /// Tries to clone itself using `TcpStream::try_clone()` on the underlying stream.
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(ChatStream(self.0.try_clone()?))
     }
 
-    /// Convenience method for TcpStream::peer_addr()
+    /// Convenience method for `TcpStream::peer_addr()`
     pub fn peer_addr(&self) -> io::Result<SocketAddr>{
         self.0.peer_addr()
     }
@@ -93,7 +93,7 @@ impl Msg {
 
     /// Returns the underlying string of the message.
     /// This method also contains defaults for string-less messages,
-    /// e.g. Msg::ConnectionAccepted.
+    /// e.g. `Msg::ConnectionAccepted`.
     pub fn string(&self) -> String {
         match self {
             Self::UserMsg(s) => s,
