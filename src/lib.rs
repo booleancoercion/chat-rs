@@ -8,7 +8,7 @@ use std::net::{SocketAddr, TcpStream};
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
-pub const MSG_LENGTH: usize = 2048;
+pub const MSG_LENGTH: usize = 512;
 
 /// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
