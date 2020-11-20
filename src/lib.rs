@@ -20,6 +20,25 @@ impl ChatStream {
     /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
     /// successful.
+    /// 
+    /// # Examples
+    /// 
+    /// Accepting a connection from a client:
+    /// ```
+    /// use std::net::TcpListener;
+    /// use chat_rs::{Msg, ChatStream};
+    /// 
+    /// fn main() -> std::io::Result<()> {
+    ///     let listener = TcpListener::bind("0.0.0.0:7878")?;
+    /// 
+    ///     let (stream, _) = listener.accept()?;
+    ///     let mut stream = ChatStream(stream);
+    ///     
+    ///     stream.send_data(Msg::ConnectionAccepted)?;
+    /// 
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn send_data(&mut self, msg: Msg) -> io::Result<()> {
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
         buffer.extend(&msg.encode_header());
@@ -35,6 +54,25 @@ impl ChatStream {
 
     /// Receive a BCMP formatted message, using the provided buffer
     /// as a means for memory efficiency. Buffer must be of length `MSG_LENGTH` at least.
+    /// 
+    /// # Examples
+    /// 
+    /// Connecting to the server:
+    /// ```
+    /// use std::net::TcpStream;
+    /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
+    /// 
+    /// fn main() -> std::io::Result<()> {
+    ///     let stream = TcpStream::connect("127.0.0.1:7878")?;
+    ///     let mut stream = ChatStream(stream);
+    ///     
+    ///     let mut buffer = [0u8; MSG_LENGTH];
+    ///     let msg = stream.receive_data(&mut buffer)?;
+    ///     // msg should be an accept/reject response
+    /// 
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
         self.0.read_exact(&mut buffer[0..3])?;
         let (code, length) = Msg::parse_header(&buffer[0..3]);
