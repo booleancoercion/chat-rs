@@ -3,14 +3,15 @@ use std::io::{self, prelude::*};
 use std::env;
 use std::process;
 
+use crossterm;
+
 use chat_rs::{ChatStream, Msg, MSG_LENGTH};
 
 fn main() -> io::Result<()> {
     let address = env::args()
         .nth(1)
         .unwrap_or_else(|| {
-            eprintln!("Please pass an IP address to connect to.");
-            process::exit(1);
+            prompt_msg("Please input the server IP: ").unwrap()
         });
     
     println!("Connecting to {}:7878", address);
