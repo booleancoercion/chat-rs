@@ -5,19 +5,21 @@ use std::process;
 use std::error::Error;
 use std::thread;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
-use crossterm::{execute, queue};
+use crossterm::{execute, queue, style::Colorize};
 
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
-use crossterm::style::{self, Colorize};
+use crossterm::style;
 
 use chat_rs::{ChatStream, Msg, MSG_LENGTH};
 
-static input_rows: AtomicU16 = AtomicU16::new(1);
-static messages: Vec<String> = Vec::new();
+static INPUT_ROWS: AtomicU16 = AtomicU16::new(1);
+
+type Messages = Arc<Mutex<Vec<(String, u16)>>>;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let address = env::args()
@@ -50,12 +52,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     
+    let messages = Arc::from(Mutex::from(Vec::new()));
+
     thread::spawn({
-        let stream_clone = stream.try_clone()?;
-        || { listen(stream_clone) }
+        let stream = stream.try_clone()?;
+        let messages = messages.clone();
+        || { listen(stream, messages) }
     });
 
-    handle_input(stream)?;
+    handle_input(stream, messages)?;
     Ok(())
 }
 
@@ -64,7 +69,7 @@ fn connect_stream(address: String) -> Result<ChatStream, io::Error> {
     Ok(ChatStream(stream))
 }
 
-fn listen(mut stream: ChatStream) {
+fn listen(mut stream: ChatStream, messages: Messages) {
     let mut buffer = [0u8; MSG_LENGTH];
     let mut stdout = io::stdout();
     loop {
@@ -77,16 +82,36 @@ fn listen(mut stream: ChatStream) {
             Ok(msg) => msg
         };
         
-        match msg {
-            Msg::UserMsg(string) => execute!(
-                stdout,
-            ).unwrap(),
-            _ => {}
-        }
+        add_message(msg, &messages);
     }
 }
 
-fn handle_input(mut stream: ChatStream) -> Result<(), Box<dyn Error>>{
+/// Adds a message to the messages vector while keeping it small by removing old messages.
+fn add_message(msg: Msg, messages: &Messages) {
+    let mut messages = messages.lock().unwrap();
+    let string = stringify_message(msg);
+    let lines = get_line_amount(&string);
+
+    messages.push((string, lines));
+
+    let (_, y) = terminal::size().unwrap();
+    let maxlen = y - INPUT_ROWS.load(Ordering::SeqCst);
+
+    if messages.len() > maxlen.into() {
+        messages.drain(0..maxlen.into());
+    }
+}
+
+fn stringify_message(msg: Msg) -> String {
+    todo!()
+}
+
+fn get_line_amount(string: &str) -> u16 {
+    string;
+    todo!();
+}
+
+fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dyn Error>>{
     let mut stdout = io::stdout();
 
     let (mut x, mut y) = terminal::size()?;
@@ -100,35 +125,19 @@ fn handle_input(mut stream: ChatStream) -> Result<(), Box<dyn Error>>{
     loop {
         let event = event::read()?;
         if let Event::Key(event) = event {
-            if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
+            let do_break = handle_key_event(
+                event,
+                &mut string,
+                &mut stream,
+                &mut stdout,
+                (x,y),
+                &messages
+            )?;
+            
+            if do_break {
                 break
-            } else if event.code == KeyCode::Enter && string.len() > 0 {
-                stream.send_data(Msg::UserMsg(string.clone()))?;
-                string.clear();
-                execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
-                input_rows.store(1, Ordering::SeqCst);
-                draw_messages()?;
-            } else if event.code == KeyCode::Backspace && string.len() > 0 {
-                string.pop();
-                let (posx, posy) = cursor::position()?;
-                if posx == 0 {
-                    execute!(stdout, cursor::MoveTo(x, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x, posy))?;
-                    input_rows.fetch_sub(1, Ordering::SeqCst);
-                } else {
-                    execute!(stdout, cursor::MoveLeft(1), style::Print(' '), cursor::MoveLeft(1))?;
-                }
-                draw_messages()?;
-            } else if let KeyCode::Char(c) = event.code {
-                if !event.modifiers.contains(KeyModifiers::CONTROL) {
-                    string.push(c);
-                    execute!(stdout, style::Print(c))?;
-                    let (posx, _) = cursor::position()?;
-                    if posx == 0 {
-                        input_rows.fetch_add(1, Ordering::SeqCst);
-                    }
-                    draw_messages()?;
-                }
-            } 
+            }
+
         } else if let Event::Resize(x0, y0) = event {
             x = x0;
             y = y0;
@@ -140,7 +149,49 @@ fn handle_input(mut stream: ChatStream) -> Result<(), Box<dyn Error>>{
     Ok(())
 }
 
-fn draw_messages() -> Result<(), Box<dyn Error>> {
+fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut ChatStream, stdout: &mut io::Stdout,
+                    xy: (u16, u16), messages: &Messages)
+        -> Result<bool, Box<dyn Error>> {
+    
+    let (x, y) = xy;
+    if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
+        return Ok(true);
+
+    } else if event.code == KeyCode::Enter && string.len() > 0 {
+        stream.send_data(Msg::UserMsg(string.clone()))?;
+        string.clear();
+        execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
+        INPUT_ROWS.store(1, Ordering::SeqCst);
+        draw_messages(&messages)?;
+
+    } else if event.code == KeyCode::Backspace && string.len() > 0 {
+        string.pop();
+        let (posx, posy) = cursor::position()?;
+        if posx == 0 {
+            execute!(stdout, cursor::MoveTo(x, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x, posy))?;
+            INPUT_ROWS.fetch_sub(1, Ordering::SeqCst);
+        } else {
+            execute!(stdout, cursor::MoveLeft(1), style::Print(' '), cursor::MoveLeft(1))?;
+        }
+        draw_messages(&messages)?;
+
+    } else if let KeyCode::Char(c) = event.code {
+        if !event.modifiers.contains(KeyModifiers::CONTROL) {
+            string.push(c);
+            execute!(stdout, style::Print(c))?;
+            let (posx, _) = cursor::position()?;
+            if posx == 0 {
+                INPUT_ROWS.fetch_add(1, Ordering::SeqCst);
+            }
+            draw_messages(&messages)?;
+        }
+    }
+    Ok(false)
+}
+
+fn draw_messages(messages: &Messages) -> Result<(), Box<dyn Error>> {
+    let mut messages = messages.lock().unwrap();
+    todo!();
 
     Ok(())
 }

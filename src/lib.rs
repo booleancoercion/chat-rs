@@ -104,7 +104,17 @@ impl ChatStream {
 #[derive(Clone)]
 pub enum Msg {
     UserMsg(String),
+    NickedUserMsg(String, String),
+
     NickChange(String),
+    NickedNickChange(String, String),
+
+    NickedConnect(String),
+    NickedDisconnect(String),
+
+    Command(String),
+    NickedCommand(String, String),
+
     ConnectionRejected(String),
     ConnectionAccepted,
 }
@@ -115,7 +125,17 @@ impl Msg {
         use Msg::*;
         match self {
             UserMsg(_) => 0,
+            NickedUserMsg(_, _) => 100,
+
             NickChange(_) => 1,
+            NickedNickChange(_, _) => 101,
+            
+            NickedConnect(_) => 98,
+            NickedDisconnect(_) => 99,
+
+            Command(_) => 3,
+            NickedCommand(_, _) => 103,
+
             ConnectionAccepted => 254,
             ConnectionRejected(_) => 255,
         }
@@ -128,22 +148,63 @@ impl Msg {
         match code {
             0 => Some(UserMsg(string)),
             1 => Some(NickChange(string)),
+            98 => Some(NickedConnect(string)),
+            99 => Some(NickedDisconnect(string)),
+            3 => Some(Command(string)),
             254 => Some(ConnectionAccepted),
             255 => Some(ConnectionRejected(string)),
-            _ => None
+            _ => {
+                let (a, b) = match Self::nicked_split(string) {
+                    Some((a, b)) => (a, b),
+                    None => return None
+                };
+                match code {
+                    100 => Some(NickedUserMsg(a, b)),
+                    101 => Some(NickedNickChange(a, b)),
+                    103 => Some(NickedCommand(a, b)),
+                    _ => None
+                }
+            }
         }
+    }
+
+    fn nicked_split(string: String) -> Option<(String, String)> {
+        let split_point = match string.find('\0') {
+            Some(n) => n,
+            None => return None
+        };
+        let (nick, other) = string.split_at(split_point);
+        Some((nick.into(), other[1..].into()))
+    }
+
+    fn nicked_join(nick: &str, other: &str) -> String {
+        let mut output = nick.to_string();
+        output.push('\0');
+        output.extend(other.chars());
+        output
     }
 
     /// Returns the underlying string of the message.
     /// This method also contains defaults for string-less messages,
     /// e.g. `Msg::ConnectionAccepted`.
     pub fn string(&self) -> String {
+        use Msg::*;
         match self {
-            Self::UserMsg(s) => s,
-            Self::NickChange(s) => s,
-            Self::ConnectionRejected(s) => s,
-            Self::ConnectionAccepted => "connection accepted"
-        }.to_string()
+            UserMsg(s) => s.to_string(),
+            NickedUserMsg(n, s) => Self::nicked_join(n, s),
+
+            NickChange(s) => s.to_string(),
+            NickedNickChange(n, s) => Self::nicked_join(n, s),
+            
+            NickedConnect(n) => n.to_string(),
+            NickedDisconnect(n) => n.to_string(),
+
+            Command(s) => s.to_string(),
+            NickedCommand(n, s) => Self::nicked_join(n, s),
+
+            ConnectionAccepted => String::from("connection accepted"),
+            ConnectionRejected(s) => s.to_string(),
+        }
     }
 
     /// Parses a raw BCMP header into a message code and length. 
