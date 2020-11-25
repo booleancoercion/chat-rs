@@ -127,7 +127,6 @@ fn stringify_message(msg: Msg) -> String {
 }
 
 fn get_line_amount(string: &str) -> u16 {
-    string;
     todo!();
 }
 
@@ -210,10 +209,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
 }
 
 fn draw_messages(messages: &Messages) -> Result<(), Box<dyn Error>> {
-    let mut messages = messages.lock().unwrap();
     todo!();
-
-    Ok(())
 }
 
 /// Prompts the user for a string via stdin, **without** a message.
