@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
-use crossterm::{execute, queue, style::Colorize};
+use crossterm::{execute, queue};
 
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
-use crossterm::style;
+use crossterm::style::{self, Colorize, Attribute};
 
 use chat_rs::{ChatStream, Msg, MSG_LENGTH};
 
@@ -103,7 +103,27 @@ fn add_message(msg: Msg, messages: &Messages) {
 }
 
 fn stringify_message(msg: Msg) -> String {
-    todo!()
+    use Msg::*;
+    use Attribute::Bold;
+    match msg {
+        NickedUserMsg(nick, message) => format!("{}> {}", nick.red().attribute(Bold), message),
+        NickedNickChange(prev, curr) => format!(
+            "{} has changed their nickname to {}",
+            prev.red().attribute(Bold),
+            curr.red().attribute(Bold)
+        ),
+        
+        NickedConnect(nick) => format!("{} has joined the chat.", nick.red().attribute(Bold)),
+        NickedDisconnect(nick) => format!("{} has left the chat.", nick.red().attribute(Bold)),
+
+        NickedCommand(nick, command) => format!(
+            "{} executed {} (to be implemented properly with the command system)",
+            nick.red().attribute(Bold),
+            command
+        ),
+        
+        _ => "???? (this shouldn't have been received by the client!)".to_string()
+    }
 }
 
 fn get_line_amount(string: &str) -> u16 {
