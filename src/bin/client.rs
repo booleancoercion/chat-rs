@@ -189,10 +189,10 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
         if posx == 0 {
             execute!(stdout, cursor::MoveTo(x, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x, posy))?;
             INPUT_ROWS.fetch_sub(1, Ordering::SeqCst);
+            draw_messages(&messages)?;
         } else {
             execute!(stdout, cursor::MoveLeft(1), style::Print(' '), cursor::MoveLeft(1))?;
         }
-        draw_messages(&messages)?;
 
     } else if let KeyCode::Char(c) = event.code {
         if !event.modifiers.contains(KeyModifiers::CONTROL) {
@@ -201,8 +201,8 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
             let (posx, _) = cursor::position()?;
             if posx == 0 {
                 INPUT_ROWS.fetch_add(1, Ordering::SeqCst);
+                draw_messages(&messages)?;
             }
-            draw_messages(&messages)?;
         }
     }
     Ok(false)
