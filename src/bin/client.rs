@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut buffer = [0u8; MSG_LENGTH];
     
-    stream.send_data(Msg::NickChange(nick.clone()))?;
+    stream.send_data(&Msg::NickChange(nick.clone()))?;
 
     match stream.receive_data(&mut buffer) {
         Ok(Msg::ConnectionAccepted) => println!("Connected."),
@@ -211,7 +211,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
         return Ok(true);
 
     } else if event.code == KeyCode::Enter && string.len() > 0 {
-        stream.send_data(Msg::UserMsg(string.clone()))?;
+        stream.send_data(&Msg::UserMsg(string.clone()))?;
         string.clear();
         execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
         INPUT_ROWS.store(1, Ordering::SeqCst);
