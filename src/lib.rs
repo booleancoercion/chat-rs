@@ -39,7 +39,7 @@ impl ChatStream {
     ///     Ok(())
     /// }
     /// ```
-    pub fn send_data(&mut self, msg: Msg) -> io::Result<()> {
+    pub fn send_data(&mut self, msg: &Msg) -> io::Result<()> {
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
         buffer.extend(&msg.encode_header());
         buffer.extend(msg.string().as_bytes());

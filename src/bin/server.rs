@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::sync::mpsc::{self, Sender, Receiver};
 
 use log::{error, warn, info, debug, trace, LevelFilter};
 use ctrlc;
@@ -56,13 +57,30 @@ fn main() -> io::Result<()> {
         process::exit(0);
     }).unwrap();
 
+    let (tx, rx) = mpsc::channel();
     let uclone = users.clone();
-    accept_connections(listener, uclone, running.clone());
+
+    thread::spawn(move || {
+       route_messages(rx, users); 
+    });
+    accept_connections(listener, uclone, running.clone(), tx);
 
     loop {} // ensures that main waits for ctrlc handler to finish
 }
 
-fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>) {
+fn route_messages(rx: Receiver<(Msg, Option<String>)>, users: UsersType) {
+    loop {
+        let (msg, recepient) = rx.recv().unwrap();
+        if let None = recepient { // message is to be broadcasted
+            let mut users = users.lock().unwrap();
+            for stream in users.values_mut() {
+                stream.send_data(&msg).unwrap_or(()); // ignore failed sends
+            }
+        }
+    }
+}
+
+fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>, tx: Sender<(Msg, Option<String>)>) {
     for stream in listener.incoming() {
         if !running.load(Ordering::SeqCst) {
             break
@@ -70,9 +88,9 @@ fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<Atom
         match stream {
             Ok(stream) => {
                 let uclone = users.clone();
-
+                let tx = tx.clone();
                 thread::spawn(move || {
-                    handle_connection(ChatStream(stream), uclone);
+                    handle_connection(ChatStream(stream), uclone, tx);
                 });
             },
             Err(_) => continue
@@ -80,7 +98,7 @@ fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<Atom
     }
 }
 
-fn handle_connection(mut stream: ChatStream, users: UsersType) {
+fn handle_connection(mut stream: ChatStream, users: UsersType, tx: Sender<(Msg, Option<String>)>) {
     let peer_address = stream.peer_addr().unwrap();
     debug!("Incoming connection from {}", peer_address);
 
@@ -97,24 +115,25 @@ fn handle_connection(mut stream: ChatStream, users: UsersType) {
     { // lock users temporarily
         let userlock = users.lock().unwrap();
         if userlock.len() >= MAX_USERS {
-            stream.send_data(Msg::ConnectionRejected("too many users".into()))
+            stream.send_data(&Msg::ConnectionRejected("too many users".into()))
                 .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
             info!("Rejected {}, too many users", peer_address);
             return
         } else if userlock.contains_key(&nick) {
-            stream.send_data(Msg::ConnectionRejected("nick taken".into()))
+            stream.send_data(&Msg::ConnectionRejected("nick taken".into()))
                 .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
             info!("Rejected {}, nick taken", peer_address);
             return
         }
     }
 
-    if let Err(e) = stream.send_data(Msg::ConnectionAccepted) {
+    if let Err(e) = stream.send_data(&Msg::ConnectionAccepted) {
         warn!("Error accepting {}: {}", peer_address, e.to_string());
         return
     }
 
     info!("Connection successful from {}, nick {}", peer_address, nick);
+    tx.send((Msg::NickedConnect(nick.clone()), None)).unwrap();
 
     let stream_clone = match stream.try_clone() {
         Ok(stream_clone) => stream_clone,
@@ -134,10 +153,17 @@ fn handle_connection(mut stream: ChatStream, users: UsersType) {
                 info!("{} [{}] disconnected.", peer_address, nick);
                 debug!("Associated error: {}", e.to_string());
                 users.lock().unwrap().remove(&nick);
+                tx.send((Msg::NickedDisconnect(nick), None)).unwrap();
                 break
             }
         };
 
         trace!("Msg({}): [{}]: {}", msg.code(), nick, msg.string());
+        match msg {
+            Msg::UserMsg(s) => tx.send((Msg::NickedUserMsg(nick.clone(), s), None)),
+            Msg::NickChange(s) => tx.send((Msg::NickedNickChange(nick.clone(), s), None)),
+            Msg::Command(s) => tx.send((Msg::NickedCommand(nick.clone(), s), None)),
+            _ => Ok(())
+        }.unwrap();
     }
 }
