@@ -99,7 +99,8 @@ fn add_message(msg: Msg, messages: &Messages) {
     let maxlen = y - INPUT_ROWS.load(Ordering::SeqCst);
 
     if messages.len() > maxlen.into() {
-        messages.drain(0..maxlen.into());
+        let upper = messages.len() - (maxlen as usize);
+        messages.drain(0..upper);
     }
 }
 
@@ -140,12 +141,13 @@ fn get_line_amount(string: &str) -> u16 {
 fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box<dyn Error>> {
     let messages = messages.lock().unwrap();
     let (_, y) = terminal::size()?;
+    let allowed_rows = y - INPUT_ROWS.load(Ordering::SeqCst) - 1;
     let fits = {
         let mut count = 0;
         let mut lines = 0;
         messages.iter().rev().for_each(|e| {
             lines += e.1;
-            if lines <= y - INPUT_ROWS.load(Ordering::SeqCst) {
+            if lines <= allowed_rows {
                 count += 1;
             }
         });
@@ -153,10 +155,10 @@ fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box
     };
 
     let to_print = &messages[(messages.len() - fits)..];
-    queue!(stdout, cursor::SavePosition, cursor::MoveTo(0,0))?;
+    queue!(stdout, cursor::SavePosition, cursor::MoveTo(0,allowed_rows), terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,0))?;
     for tuple in to_print {
         let string = &tuple.0;
-        queue!(stdout, style::Print(string))?;
+        queue!(stdout, style::Print(string), cursor::MoveToNextLine(1))?;
     }
     queue!(stdout, cursor::RestorePosition)?;
     stdout.flush()?;
@@ -215,13 +217,12 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
         string.clear();
         execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
         INPUT_ROWS.store(1, Ordering::SeqCst);
-        draw_messages(&messages, stdout)?;
 
     } else if event.code == KeyCode::Backspace && string.len() > 0 {
         string.pop();
         let (posx, posy) = cursor::position()?;
         if posx == 0 {
-            execute!(stdout, cursor::MoveTo(x, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x, posy))?;
+            execute!(stdout, cursor::MoveTo(x-1, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x-1, posy))?;
             INPUT_ROWS.fetch_sub(1, Ordering::SeqCst);
             draw_messages(&messages, stdout)?;
         } else {
@@ -233,7 +234,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
             string.push(c);
             execute!(stdout, style::Print(c))?;
             let (posx, _) = cursor::position()?;
-            if posx == 0 {
+            if posx == 1 && string.len() != 1 {
                 INPUT_ROWS.fetch_add(1, Ordering::SeqCst);
             }
         }
