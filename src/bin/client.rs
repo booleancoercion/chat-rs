@@ -169,12 +169,10 @@ fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box
 fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dyn Error>>{
     let mut stdout = io::stdout();
 
-    let (mut x, mut y) = terminal::size()?;
-
     terminal::enable_raw_mode()?;
     execute!(stdout,
         terminal::EnterAlternateScreen,
-        cursor::MoveTo(0, y))?;
+        cursor::MoveTo(0, terminal::size()?.1))?;
 
     let mut string = String::new();
     loop {
@@ -185,7 +183,6 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
                 &mut string,
                 &mut stream,
                 &mut stdout,
-                (x,y),
                 &messages
             )?;
             
@@ -193,9 +190,6 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
                 break
             }
 
-        } else if let Event::Resize(x0, y0) = event {
-            x = x0;
-            y = y0;
         }
     }
 
@@ -205,10 +199,11 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
 }
 
 fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut ChatStream, stdout: &mut io::Stdout,
-                    xy: (u16, u16), messages: &Messages)
+                    messages: &Messages)
         -> Result<bool, Box<dyn Error>> {
     
-    let (x, y) = xy;
+    let (x, y) = terminal::size().unwrap();
+
     if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
         return Ok(true);
 
