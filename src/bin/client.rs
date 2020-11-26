@@ -190,6 +190,8 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
                 break
             }
 
+        } else if let Event::Resize(_, _) = event {
+            draw_messages(&messages, &mut stdout)?;
         }
     }
 
@@ -207,11 +209,16 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
     if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
         return Ok(true);
 
-    } else if event.code == KeyCode::Enter && string.len() > 0 {
-        stream.send_data(&Msg::UserMsg(string.clone()))?;
-        string.clear();
-        execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
+    } else if event.code == KeyCode::Enter {
+        if string.len() > 0 {
+            stream.send_data(&Msg::UserMsg(string.clone()))?;
+            string.clear();
+            queue!(stdout, terminal::Clear(ClearType::FromCursorUp))?;
+        } else {
+            draw_messages(messages, stdout)?;
+        }
         INPUT_ROWS.store(1, Ordering::SeqCst);
+        execute!(stdout, cursor::MoveTo(0,y))?;
 
     } else if event.code == KeyCode::Backspace && string.len() > 0 {
         string.pop();
