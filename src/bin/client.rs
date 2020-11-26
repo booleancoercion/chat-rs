@@ -83,6 +83,7 @@ fn listen(mut stream: ChatStream, messages: Messages) {
         };
         
         add_message(msg, &messages);
+        draw_messages(&messages, &mut stdout).unwrap();
     }
 }
 
@@ -108,26 +109,59 @@ fn stringify_message(msg: Msg) -> String {
     match msg {
         NickedUserMsg(nick, message) => format!("{}> {}", nick.red().attribute(Bold), message),
         NickedNickChange(prev, curr) => format!(
-            "{} has changed their nickname to {}",
+            "! {} has changed their nickname to {}",
             prev.red().attribute(Bold),
             curr.red().attribute(Bold)
         ),
         
-        NickedConnect(nick) => format!("{} has joined the chat.", nick.red().attribute(Bold)),
-        NickedDisconnect(nick) => format!("{} has left the chat.", nick.red().attribute(Bold)),
+        NickedConnect(nick) => format!("! {} has joined the chat.", nick.red().attribute(Bold)),
+        NickedDisconnect(nick) => format!("! {} has left the chat.", nick.red().attribute(Bold)),
 
         NickedCommand(nick, command) => format!(
-            "{} executed {} (to be implemented properly with the command system)",
+            "! {} executed {} (to be implemented properly with the command system)",
             nick.red().attribute(Bold),
             command
         ),
         
-        _ => "???? (this shouldn't have been received by the client!)".to_string()
+        _ => "???? (this shouldn't have been received by the client!)".blue().to_string()
     }
 }
 
 fn get_line_amount(string: &str) -> u16 {
-    todo!();
+    let (x, _) = terminal::size().unwrap();
+    let mut output = 0;
+    for line in string.lines() {
+        let chars = line.chars().count() as u16;
+        output += 1 + (chars/x);
+    }
+    output
+}
+
+fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box<dyn Error>> {
+    let messages = messages.lock().unwrap();
+    let (_, y) = terminal::size()?;
+    let fits = {
+        let mut count = 0;
+        let mut lines = 0;
+        messages.iter().rev().for_each(|e| {
+            lines += e.1;
+            if lines <= y - INPUT_ROWS.load(Ordering::SeqCst) {
+                count += 1;
+            }
+        });
+        count
+    };
+
+    let to_print = &messages[(messages.len() - fits)..];
+    queue!(stdout, cursor::SavePosition, cursor::MoveTo(0,0))?;
+    for tuple in to_print {
+        let string = &tuple.0;
+        queue!(stdout, style::Print(string))?;
+    }
+    queue!(stdout, cursor::RestorePosition)?;
+    stdout.flush()?;
+
+    Ok(())
 }
 
 fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dyn Error>>{
@@ -181,7 +215,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
         string.clear();
         execute!(stdout, terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,y))?;
         INPUT_ROWS.store(1, Ordering::SeqCst);
-        draw_messages(&messages)?;
+        draw_messages(&messages, stdout)?;
 
     } else if event.code == KeyCode::Backspace && string.len() > 0 {
         string.pop();
@@ -189,7 +223,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
         if posx == 0 {
             execute!(stdout, cursor::MoveTo(x, posy-1), style::Print(' '), terminal::ScrollDown(1), cursor::MoveTo(x, posy))?;
             INPUT_ROWS.fetch_sub(1, Ordering::SeqCst);
-            draw_messages(&messages)?;
+            draw_messages(&messages, stdout)?;
         } else {
             execute!(stdout, cursor::MoveLeft(1), style::Print(' '), cursor::MoveLeft(1))?;
         }
@@ -201,15 +235,10 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
             let (posx, _) = cursor::position()?;
             if posx == 0 {
                 INPUT_ROWS.fetch_add(1, Ordering::SeqCst);
-                draw_messages(&messages)?;
             }
         }
     }
     Ok(false)
-}
-
-fn draw_messages(messages: &Messages) -> Result<(), Box<dyn Error>> {
-    todo!();
 }
 
 /// Prompts the user for a string via stdin, **without** a message.
