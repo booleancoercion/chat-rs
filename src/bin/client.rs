@@ -214,9 +214,8 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
             stream.send_data(&Msg::UserMsg(string.clone()))?;
             string.clear();
             queue!(stdout, terminal::Clear(ClearType::FromCursorUp))?;
-        } else {
-            draw_messages(messages, stdout)?;
         }
+        draw_messages(messages, stdout)?;
         INPUT_ROWS.store(1, Ordering::SeqCst);
         execute!(stdout, cursor::MoveTo(0,y))?;
 
