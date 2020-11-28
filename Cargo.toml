@@ -11,3 +11,8 @@ log = "0.4.0"
 env_logger = "0.8.2"
 crossterm = "0.18.2"
 ctrlc = "3.1.7"
+aes = "0.6.0"
+rand_core = { version="0.5.1", features=["getrandom"] }
+k256 = { version="0.5.10", features=["ecdh"] }
+hkdf = "0.10.0"
+sha2 = "0.9.2"

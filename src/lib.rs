@@ -5,10 +5,15 @@
 
 use std::io::{self, prelude::*};
 use std::net::{SocketAddr, TcpStream};
+use k256::{EncodedPoint, ecdh::EphemeralSecret};
+use rand_core::OsRng;
+use hkdf::Hkdf;
+use sha2::Sha256;
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
 pub const MSG_LENGTH: usize = 513; // 1+512 for block header
+pub const ECDH_PUBLIC_LEN: usize = 33;
 
 /// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
@@ -30,10 +35,28 @@ impl ChatStream {
         }
     }
 
-    /// Assigns a new encryption key used for communication. Note that this must be done
-    /// on the receiving side as well, otherwise communication will be malformed.
-    pub fn encrypt(&mut self, key: [u8; 32]) {
+    /// Encrypts the current ChatStream.
+    /// NOTE: This operation must be executed on both ends to work.
+    pub fn encrypt(&mut self) -> io::Result<()> {
+        let my_secret = EphemeralSecret::random(&mut OsRng);
+        let my_public = EncodedPoint::from(&my_secret);
+
+        let public_bytes = my_public.as_bytes(); // The length of this should be exactly ECDH_PUBLIC_LEN bytes
+        self.inner.write_all(public_bytes)?;
+
+        let mut other_public_bytes = [0u8; ECDH_PUBLIC_LEN];
+        self.inner.read_exact(&mut other_public_bytes)?;
+        let other_public = EncodedPoint::from_bytes(&other_public_bytes).unwrap();
+
+        let shared = my_secret.diffie_hellman(&other_public).unwrap();
+        let shared_bytes = &shared.as_bytes()[..];
+        let hk = Hkdf::<Sha256>::new(None, shared_bytes);
+
+        let mut key = [0u8; 32];
+        hk.expand(&[], &mut key).unwrap();
+        
         self.key = Some(key);
+        Ok(())
     }
 
     /// Send a message using the contained `TcpStream`, formatted according to
@@ -136,7 +159,7 @@ pub enum Msg {
 
     ConnectionEncrypted,
     ConnectionAccepted,
-    ConnectionRejected(String),
+    ConnectionRejected(String)
 }
 
 impl Msg {
