@@ -42,6 +42,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match stream.receive_data(&mut buffer) {
         Ok(Msg::ConnectionAccepted) => println!("Connected."),
+        Ok(Msg::ConnectionEncrypted) => {
+            println!("Connected. Encrypting...");
+            stream.encrypt()?;
+        },
         Ok(msg) => {
             eprintln!("Server refused connection: {}", msg.string());
             process::exit(0)
