@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn connect_stream(address: String) -> Result<ChatStream, io::Error> {
     let stream = TcpStream::connect(format!("{}:7878", address))?;
-    Ok(ChatStream(stream))
+    Ok(ChatStream::new(stream))
 }
 
 fn listen(mut stream: ChatStream, messages: Messages) {
