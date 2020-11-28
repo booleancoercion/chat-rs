@@ -49,7 +49,7 @@ fn main() -> io::Result<()> {
         debug!("Acquired users lock");
         for (nick, stream) in users.iter() {
             debug!("Shutting down {}'s stream", nick);
-            match stream.0.shutdown(Shutdown::Both) {
+            match stream.inner.shutdown(Shutdown::Both) {
                 Ok(_) => trace!("Stream shutdown successful."),
                 Err(_) => trace!("Stream shutdown failed.")
             }
@@ -90,7 +90,7 @@ fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<Atom
                 let uclone = users.clone();
                 let tx = tx.clone();
                 thread::spawn(move || {
-                    handle_connection(ChatStream(stream), uclone, tx);
+                    handle_connection(ChatStream::new(stream), uclone, tx);
                 });
             },
             Err(_) => continue

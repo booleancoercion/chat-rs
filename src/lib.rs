@@ -8,15 +8,34 @@ use std::net::{SocketAddr, TcpStream};
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
-pub const MSG_LENGTH: usize = 512;
+pub const MSG_LENGTH: usize = 513; // 1+512 for block header
 
 /// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
 /// using BCMP, and is highly recommended for working consistently between the
 /// server and the client.
-pub struct ChatStream(pub TcpStream);
+pub struct ChatStream {
+    pub inner: TcpStream,
+    key: Option<[u8; 32]> // 256-bit key
+}
 
 impl ChatStream {
+
+    /// Generate a new ChatStream from an existing TcpStream, without encryption (Use ChatStream::encrypt
+    /// to add a key).
+    pub fn new(stream: TcpStream) -> Self {
+        ChatStream {
+            inner: stream,
+            key: None
+        }
+    }
+
+    /// Assigns a new encryption key used for communication. Note that this must be done
+    /// on the receiving side as well, otherwise communication will be malformed.
+    pub fn encrypt(&mut self, key: [u8; 32]) {
+        self.key = Some(key);
+    }
+
     /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
     /// successful.
@@ -32,7 +51,7 @@ impl ChatStream {
     ///     let listener = TcpListener::bind("0.0.0.0:7878")?;
     /// 
     ///     let (stream, _) = listener.accept()?;
-    ///     let mut stream = ChatStream(stream);
+    ///     let mut stream = ChatStream::new(stream);
     ///     
     ///     stream.send_data(Msg::ConnectionAccepted)?;
     /// 
@@ -47,8 +66,8 @@ impl ChatStream {
         if buffer.len() > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Attempted to send an invalid-length message (too big)"));
         }
-        self.0.write_all(&buffer)?;
-        self.0.flush()?;
+        self.inner.write_all(&buffer)?;
+        self.inner.flush()?;
         io::Result::Ok(())
     }
 
@@ -74,13 +93,13 @@ impl ChatStream {
     /// }
     /// ```
     pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
-        self.0.read_exact(&mut buffer[0..3])?;
+        self.inner.read_exact(&mut buffer[0..3])?;
         let (code, length) = Msg::parse_header(&buffer[0..3]);
 
         if length + 3 > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid message length (too big)"));
         }
-        self.0.read_exact(&mut buffer[3..length+3])?;
+        self.inner.read_exact(&mut buffer[3..length+3])?;
         let string = String::from_utf8_lossy(&buffer[3..length+3]).to_string();
     
         match Msg::from_parts(code, string) {
@@ -91,12 +110,12 @@ impl ChatStream {
 
     /// Tries to clone itself using `TcpStream::try_clone()` on the underlying stream.
     pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(ChatStream(self.0.try_clone()?))
+        Ok(ChatStream { inner: self.inner.try_clone()?, key: self.key })
     }
 
     /// Convenience method for `TcpStream::peer_addr()`
     pub fn peer_addr(&self) -> io::Result<SocketAddr>{
-        self.0.peer_addr()
+        self.inner.peer_addr()
     }
 }
 
@@ -115,8 +134,9 @@ pub enum Msg {
     Command(String),
     NickedCommand(String, String),
 
-    ConnectionRejected(String),
+    ConnectionEncrypted,
     ConnectionAccepted,
+    ConnectionRejected(String),
 }
 
 impl Msg {
@@ -135,7 +155,8 @@ impl Msg {
 
             Command(_) => 3,
             NickedCommand(_, _) => 103,
-
+            
+            ConnectionEncrypted => 253,
             ConnectionAccepted => 254,
             ConnectionRejected(_) => 255,
         }
@@ -151,6 +172,7 @@ impl Msg {
             98 => Some(NickedConnect(string)),
             99 => Some(NickedDisconnect(string)),
             3 => Some(Command(string)),
+            253 => Some(ConnectionEncrypted),
             254 => Some(ConnectionAccepted),
             255 => Some(ConnectionRejected(string)),
             _ => {
@@ -201,13 +223,15 @@ impl Msg {
 
             Command(s) => s.to_string(),
             NickedCommand(n, s) => Self::nicked_join(n, s),
-
+            
+            ConnectionEncrypted => String::from("connection encrypted; commence ECDH"),
             ConnectionAccepted => String::from("connection accepted"),
             ConnectionRejected(s) => s.to_string(),
         }
     }
 
-    /// Parses a raw BCMP header into a message code and length. 
+    /// Parses a raw BCMP header into a message code and length.
+    /// NOTE: This will read the header incorrectly when used with EBCMP!
     pub fn parse_header(header: &[u8]) -> (u8, usize) {
         let code = header[0];
         let length = u16::from_le_bytes([header[1], header[2]]) as usize;
