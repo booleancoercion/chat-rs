@@ -85,7 +85,7 @@ impl ChatStream {
     ///     let (stream, _) = listener.accept()?;
     ///     let mut stream = ChatStream::new(stream);
     ///     
-    ///     stream.send_data(Msg::ConnectionAccepted)?;
+    ///     stream.send_data(&Msg::ConnectionAccepted)?;
     /// 
     ///     Ok(())
     /// }
@@ -140,7 +140,7 @@ impl ChatStream {
     /// 
     /// fn main() -> std::io::Result<()> {
     ///     let stream = TcpStream::connect("127.0.0.1:7878")?;
-    ///     let mut stream = ChatStream(stream);
+    ///     let mut stream = ChatStream::new(stream);
     ///     
     ///     let mut buffer = [0u8; MSG_LENGTH];
     ///     let msg = stream.receive_data(&mut buffer)?;
