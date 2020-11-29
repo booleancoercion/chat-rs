@@ -75,7 +75,7 @@ impl ChatStream {
     /// # Examples
     /// 
     /// Accepting a connection from a client:
-    /// ```
+    /// ```no_run
     /// use std::net::TcpListener;
     /// use chat_rs::{Msg, ChatStream};
     /// 
@@ -134,7 +134,7 @@ impl ChatStream {
     /// # Examples
     /// 
     /// Connecting to the server:
-    /// ```
+    /// ```no_run
     /// use std::net::TcpStream;
     /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
     /// 
