@@ -30,6 +30,8 @@ fn main() -> io::Result<()> {
             "0.0.0.0".into()
         });
     
+    let is_encrypted = env::var("CHAT_RS_UNENCRYPTED").is_err();
+    
     info!("Listening to connections on {}:7878", address);
     let listener = TcpListener::bind(format!("{}:7878", address))
         .unwrap_or_else(|err| {
@@ -49,7 +51,7 @@ fn main() -> io::Result<()> {
         debug!("Acquired users lock");
         for (nick, stream) in users.iter() {
             debug!("Shutting down {}'s stream", nick);
-            match stream.0.shutdown(Shutdown::Both) {
+            match stream.inner.shutdown(Shutdown::Both) {
                 Ok(_) => trace!("Stream shutdown successful."),
                 Err(_) => trace!("Stream shutdown failed.")
             }
@@ -63,7 +65,7 @@ fn main() -> io::Result<()> {
     thread::spawn(move || {
        route_messages(rx, users); 
     });
-    accept_connections(listener, uclone, running.clone(), tx);
+    accept_connections(listener, uclone, running.clone(), tx, is_encrypted);
 
     loop {} // ensures that main waits for ctrlc handler to finish
 }
@@ -80,7 +82,8 @@ fn route_messages(rx: Receiver<(Msg, Option<String>)>, users: UsersType) {
     }
 }
 
-fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>, tx: Sender<(Msg, Option<String>)>) {
+fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>,
+        tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
     for stream in listener.incoming() {
         if !running.load(Ordering::SeqCst) {
             break
@@ -90,7 +93,7 @@ fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<Atom
                 let uclone = users.clone();
                 let tx = tx.clone();
                 thread::spawn(move || {
-                    handle_connection(ChatStream(stream), uclone, tx);
+                    handle_connection(ChatStream::new(stream), uclone, tx, is_encrypted);
                 });
             },
             Err(_) => continue
@@ -98,7 +101,8 @@ fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<Atom
     }
 }
 
-fn handle_connection(mut stream: ChatStream, users: UsersType, tx: Sender<(Msg, Option<String>)>) {
+fn handle_connection(mut stream: ChatStream, users: UsersType,
+        tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
     let peer_address = stream.peer_addr().unwrap();
     debug!("Incoming connection from {}", peer_address);
 
@@ -126,10 +130,19 @@ fn handle_connection(mut stream: ChatStream, users: UsersType, tx: Sender<(Msg, 
             return
         }
     }
+    let msg = if is_encrypted {
+        Msg::ConnectionEncrypted
+    } else {
+        Msg::ConnectionAccepted
+    };
 
-    if let Err(e) = stream.send_data(&Msg::ConnectionAccepted) {
+    if let Err(e) = stream.send_data(&msg) {
         warn!("Error accepting {}: {}", peer_address, e.to_string());
         return
+    }
+
+    if is_encrypted {
+        stream.encrypt().unwrap();
     }
 
     info!("Connection successful from {}, nick {}", peer_address, nick);

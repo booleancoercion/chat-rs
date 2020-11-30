@@ -5,18 +5,69 @@
 
 use std::io::{self, prelude::*};
 use std::net::{SocketAddr, TcpStream};
+use k256::{EncodedPoint, ecdh::EphemeralSecret};
+use rand_core::OsRng;
+use hkdf::Hkdf;
+use sha2::Sha256;
+use aes::Aes256;
+use aes::cipher::{BlockCipher, NewBlockCipher, generic_array::GenericArray};
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
-pub const MSG_LENGTH: usize = 512;
+pub const MSG_LENGTH: usize = 513; // 1+512 for block header
+pub const ECDH_PUBLIC_LEN: usize = 33;
 
 /// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
 /// using BCMP, and is highly recommended for working consistently between the
 /// server and the client.
-pub struct ChatStream(pub TcpStream);
+pub struct ChatStream {
+    pub inner: TcpStream,
+    cipher: Option<Aes256> // 256-bit key
+}
 
 impl ChatStream {
+
+    /// Generate a new ChatStream from an existing TcpStream, without encryption (Use ChatStream::encrypt
+    /// to add a key).
+    pub fn new(stream: TcpStream) -> Self {
+        ChatStream {
+            inner: stream,
+            cipher: None
+        }
+    }
+
+    /// Encrypts the current ChatStream.
+    /// NOTE: This operation must be executed on both ends to work.
+    /// 
+    /// Calling this function when the stream is already encrypted
+    /// will do nothing.
+    pub fn encrypt(&mut self) -> io::Result<()> {
+        if self.cipher.is_some() {
+            return Ok(())
+        }
+        let my_secret = EphemeralSecret::random(&mut OsRng);
+        let my_public = EncodedPoint::from(&my_secret);
+
+        let public_bytes = my_public.as_bytes(); // The length of this should be exactly ECDH_PUBLIC_LEN bytes
+        self.inner.write_all(public_bytes)?;
+
+        let mut other_public_bytes = [0u8; ECDH_PUBLIC_LEN];
+        self.inner.read_exact(&mut other_public_bytes)?;
+        let other_public = EncodedPoint::from_bytes(&other_public_bytes).unwrap();
+
+        let shared = my_secret.diffie_hellman(&other_public).unwrap();
+        let shared_bytes = &shared.as_bytes()[..];
+        let hk = Hkdf::<Sha256>::new(None, shared_bytes);
+
+        let mut key = [0u8; 32];
+        hk.expand(&[], &mut key).unwrap();
+        
+        let key = GenericArray::from_slice(&key);
+        self.cipher = Some(Aes256::new(&key));
+        Ok(())
+    }
+
     /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
     /// successful.
@@ -24,7 +75,7 @@ impl ChatStream {
     /// # Examples
     /// 
     /// Accepting a connection from a client:
-    /// ```
+    /// ```no_run
     /// use std::net::TcpListener;
     /// use chat_rs::{Msg, ChatStream};
     /// 
@@ -32,24 +83,49 @@ impl ChatStream {
     ///     let listener = TcpListener::bind("0.0.0.0:7878")?;
     /// 
     ///     let (stream, _) = listener.accept()?;
-    ///     let mut stream = ChatStream(stream);
+    ///     let mut stream = ChatStream::new(stream);
     ///     
-    ///     stream.send_data(Msg::ConnectionAccepted)?;
+    ///     stream.send_data(&Msg::ConnectionAccepted)?;
     /// 
     ///     Ok(())
     /// }
     /// ```
     pub fn send_data(&mut self, msg: &Msg) -> io::Result<()> {
+        let is_encrypted = self.cipher.is_some();
+
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
+        if is_encrypted {
+            buffer.push(0);
+        }
         buffer.extend(&msg.encode_header());
         buffer.extend(msg.string().as_bytes());
         
         if buffer.len() > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Attempted to send an invalid-length message (too big)"));
         }
-        self.0.write_all(&buffer)?;
-        self.0.flush()?;
-        io::Result::Ok(())
+        if is_encrypted {
+            let msg_len = buffer.len() - 1;
+            let blocks = {
+                let temp = msg_len/16;
+                if temp*16 < msg_len {
+                    buffer.extend([0].repeat((temp+1)*16 - msg_len));
+                    temp + 1
+                } else {
+                    temp
+                }
+            } as u8;
+
+            buffer[0] = blocks;
+            
+            let cipher = self.cipher.as_ref().unwrap(); // is_encrypted == true, this has to work
+            for chunk in (&mut buffer[1..]).chunks_mut(16) {
+                let block = GenericArray::from_mut_slice(chunk);
+                cipher.encrypt_block(block);
+            }
+        }
+        self.inner.write_all(&buffer)?;
+        self.inner.flush()?;
+        Ok(())
     }
 
     /// Receive a BCMP formatted message, using the provided buffer
@@ -58,13 +134,13 @@ impl ChatStream {
     /// # Examples
     /// 
     /// Connecting to the server:
-    /// ```
+    /// ```no_run
     /// use std::net::TcpStream;
     /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
     /// 
     /// fn main() -> std::io::Result<()> {
     ///     let stream = TcpStream::connect("127.0.0.1:7878")?;
-    ///     let mut stream = ChatStream(stream);
+    ///     let mut stream = ChatStream::new(stream);
     ///     
     ///     let mut buffer = [0u8; MSG_LENGTH];
     ///     let msg = stream.receive_data(&mut buffer)?;
@@ -74,14 +150,40 @@ impl ChatStream {
     /// }
     /// ```
     pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
-        self.0.read_exact(&mut buffer[0..3])?;
-        let (code, length) = Msg::parse_header(&buffer[0..3]);
+        let is_encrypted = self.cipher.is_some();
+
+        let (code, length) = if is_encrypted {
+            self.inner.read_exact(&mut buffer[0..1])?;
+            let blocks = buffer[0] as usize;
+
+            if blocks*16 + 1 > MSG_LENGTH {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid block amount (too big)"));
+            }
+
+            self.inner.read_exact(&mut buffer[1..(1+blocks*16)])?;
+
+            let cipher = self.cipher.as_ref().unwrap();
+            for chunk in (&mut buffer[1..]).chunks_mut(16) {
+                let block = GenericArray::from_mut_slice(chunk);
+                cipher.decrypt_block(block);
+            }
+
+            Msg::parse_header(&buffer[1..4])
+        } else {
+            self.inner.read_exact(&mut buffer[0..3])?;
+            Msg::parse_header(&buffer[0..3])
+        };
 
         if length + 3 > MSG_LENGTH {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid message length (too big)"));
         }
-        self.0.read_exact(&mut buffer[3..length+3])?;
-        let string = String::from_utf8_lossy(&buffer[3..length+3]).to_string();
+        
+        let string = if is_encrypted {
+            String::from_utf8_lossy(&buffer[4..length+4]).to_string()
+        } else {
+            self.inner.read_exact(&mut buffer[3..length+3])?;
+            String::from_utf8_lossy(&buffer[3..length+3]).to_string()
+        };
     
         match Msg::from_parts(code, string) {
             Some(msg) => Ok(msg),
@@ -91,12 +193,12 @@ impl ChatStream {
 
     /// Tries to clone itself using `TcpStream::try_clone()` on the underlying stream.
     pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(ChatStream(self.0.try_clone()?))
+        Ok(ChatStream { inner: self.inner.try_clone()?, cipher: self.cipher.clone() })
     }
 
     /// Convenience method for `TcpStream::peer_addr()`
     pub fn peer_addr(&self) -> io::Result<SocketAddr>{
-        self.0.peer_addr()
+        self.inner.peer_addr()
     }
 }
 
@@ -115,8 +217,9 @@ pub enum Msg {
     Command(String),
     NickedCommand(String, String),
 
-    ConnectionRejected(String),
+    ConnectionEncrypted,
     ConnectionAccepted,
+    ConnectionRejected(String)
 }
 
 impl Msg {
@@ -135,7 +238,8 @@ impl Msg {
 
             Command(_) => 3,
             NickedCommand(_, _) => 103,
-
+            
+            ConnectionEncrypted => 253,
             ConnectionAccepted => 254,
             ConnectionRejected(_) => 255,
         }
@@ -151,6 +255,7 @@ impl Msg {
             98 => Some(NickedConnect(string)),
             99 => Some(NickedDisconnect(string)),
             3 => Some(Command(string)),
+            253 => Some(ConnectionEncrypted),
             254 => Some(ConnectionAccepted),
             255 => Some(ConnectionRejected(string)),
             _ => {
@@ -201,13 +306,15 @@ impl Msg {
 
             Command(s) => s.to_string(),
             NickedCommand(n, s) => Self::nicked_join(n, s),
-
+            
+            ConnectionEncrypted => String::from("connection encrypted; commence ECDH"),
             ConnectionAccepted => String::from("connection accepted"),
             ConnectionRejected(s) => s.to_string(),
         }
     }
 
-    /// Parses a raw BCMP header into a message code and length. 
+    /// Parses a raw BCMP header into a message code and length.
+    /// NOTE: This will read the header incorrectly when used with EBCMP!
     pub fn parse_header(header: &[u8]) -> (u8, usize) {
         let code = header[0];
         let length = u16::from_le_bytes([header[1], header[2]]) as usize;
