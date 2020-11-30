@@ -31,6 +31,11 @@ fn main() -> io::Result<()> {
         });
     
     let is_encrypted = env::var("CHAT_RS_UNENCRYPTED").is_err();
+    if is_encrypted {
+        info!("This server only accepts encrypted connections.")
+    } else {
+        info!("This server is operating in unencrypted mode.")
+    }
     
     info!("Listening to connections on {}:7878", address);
     let listener = TcpListener::bind(format!("{}:7878", address))
@@ -143,6 +148,7 @@ fn handle_connection(mut stream: ChatStream, users: UsersType,
 
     if is_encrypted {
         stream.encrypt().unwrap();
+        debug!("Encrypted stream from {}", peer_address);
     }
 
     info!("Connection successful from {}, nick {}", peer_address, nick);
