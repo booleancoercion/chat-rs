@@ -80,6 +80,7 @@ fn listen(mut stream: ChatStream, messages: Messages) {
         let msg = match stream.receive_data(&mut buffer) {
             Err(_) => {
                 execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
+                terminal::disable_raw_mode().unwrap();
                 println!("Disconnected from server.");
                 process::exit(0);
             },
