@@ -11,6 +11,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use aes::Aes256;
 use aes::cipher::{BlockCipher, NewBlockCipher, generic_array::GenericArray};
+use anyhow::{Result, bail, anyhow};
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
@@ -42,7 +43,7 @@ impl ChatStream {
     /// 
     /// Calling this function when the stream is already encrypted
     /// will do nothing.
-    pub fn encrypt(&mut self) -> io::Result<()> {
+    pub fn encrypt(&mut self) -> Result<()> {
         if self.cipher.is_some() {
             return Ok(())
         }
@@ -54,14 +55,15 @@ impl ChatStream {
 
         let mut other_public_bytes = [0u8; ECDH_PUBLIC_LEN];
         self.inner.read_exact(&mut other_public_bytes)?;
-        let other_public = EncodedPoint::from_bytes(&other_public_bytes).unwrap();
+        let other_public = EncodedPoint::from_bytes(&other_public_bytes)?;
 
-        let shared = my_secret.diffie_hellman(&other_public).unwrap();
+        let shared = my_secret.diffie_hellman(&other_public)?;
         let shared_bytes = &shared.as_bytes()[..];
         let hk = Hkdf::<Sha256>::new(None, shared_bytes);
 
         let mut key = [0u8; 32];
-        hk.expand(&[], &mut key).unwrap();
+        hk.expand(&[], &mut key)
+            .expect("hk.expand got invalid length - this should never ever happen!");
         
         let key = GenericArray::from_slice(&key);
         self.cipher = Some(Aes256::new(&key));
@@ -90,20 +92,15 @@ impl ChatStream {
     ///     Ok(())
     /// }
     /// ```
-    pub fn send_data(&mut self, msg: &Msg) -> io::Result<()> {
-        let is_encrypted = self.cipher.is_some();
-
+    pub fn send_data(&mut self, msg: &Msg) -> Result<()> {
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
-        if is_encrypted {
-            buffer.push(0);
-        }
+        if self.cipher.is_some() { buffer.push(0); }
         buffer.extend(&msg.encode_header());
         buffer.extend(msg.string().as_bytes());
         
-        if buffer.len() > MSG_LENGTH {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Attempted to send an invalid-length message (too big)"));
-        }
-        if is_encrypted {
+        if buffer.len() > MSG_LENGTH { bail!("Attempted to send an invalid-length message (too big)"); }
+
+        if let Some(cipher) = self.cipher.as_ref() {
             let msg_len = buffer.len() - 1;
             let blocks = {
                 let temp = msg_len/16;
@@ -117,7 +114,6 @@ impl ChatStream {
 
             buffer[0] = blocks;
             
-            let cipher = self.cipher.as_ref().unwrap(); // is_encrypted == true, this has to work
             for chunk in (&mut buffer[1..]).chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
                 cipher.encrypt_block(block);
@@ -149,20 +145,17 @@ impl ChatStream {
     ///     Ok(())
     /// }
     /// ```
-    pub fn receive_data(&mut self, buffer: &mut [u8]) -> io::Result<Msg> {
-        let is_encrypted = self.cipher.is_some();
-
-        let (code, length) = if is_encrypted {
+    pub fn receive_data(&mut self, buffer: &mut [u8]) -> Result<Msg> {
+        let (code, length) = if let Some(cipher) = self.cipher.as_ref() {
             self.inner.read_exact(&mut buffer[0..1])?;
             let blocks = buffer[0] as usize;
 
             if blocks*16 + 1 > MSG_LENGTH {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid block amount (too big)"));
+                bail!("Received invalid block amount (too big)");
             }
 
             self.inner.read_exact(&mut buffer[1..(1+blocks*16)])?;
 
-            let cipher = self.cipher.as_ref().unwrap();
             for chunk in (&mut buffer[1..]).chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
                 cipher.decrypt_block(block);
@@ -175,10 +168,10 @@ impl ChatStream {
         };
 
         if length + 3 > MSG_LENGTH {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Received invalid message length (too big)"));
+            bail!("Received invalid message length (too big)");
         }
         
-        let string = if is_encrypted {
+        let string = if self.cipher.is_some() {
             String::from_utf8_lossy(&buffer[4..length+4]).to_string()
         } else {
             self.inner.read_exact(&mut buffer[3..length+3])?;
@@ -187,7 +180,7 @@ impl ChatStream {
     
         match Msg::from_parts(code, string) {
             Some(msg) => Ok(msg),
-            None => Err(io::Error::new(io::ErrorKind::Other, "Received invalid message code"))
+            None => Err(anyhow!("Received invalid message code"))
         }
     }
 
@@ -197,7 +190,7 @@ impl ChatStream {
     }
 
     /// Convenience method for `TcpStream::peer_addr()`
-    pub fn peer_addr(&self) -> io::Result<SocketAddr>{
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.inner.peer_addr()
     }
 }
