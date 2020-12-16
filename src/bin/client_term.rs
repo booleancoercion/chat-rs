@@ -80,6 +80,7 @@ fn listen(mut stream: ChatStream, messages: Messages) {
         let msg = match stream.receive_data(&mut buffer) {
             Err(_) => {
                 execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
+                terminal::disable_raw_mode().unwrap();
                 println!("Disconnected from server.");
                 process::exit(0);
             },
@@ -100,7 +101,7 @@ fn add_message(msg: Msg, messages: &Messages) {
     messages.push((string, lines));
 
     let (_, y) = terminal::size().unwrap();
-    let maxlen = y - INPUT_ROWS.load(Ordering::SeqCst);
+    let maxlen = 2*(y - INPUT_ROWS.load(Ordering::SeqCst)); // x2 so that messages behave better on-screen
 
     if messages.len() > maxlen.into() {
         let upper = messages.len() - (maxlen as usize);

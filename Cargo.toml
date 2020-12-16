@@ -17,3 +17,4 @@ k256 = { version="0.5.10", features=["ecdh"] }
 hkdf = "0.10.0"
 sha2 = "0.9.2"
 anyhow = "1.0.35"
+iced = "0.2.0"
