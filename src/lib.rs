@@ -79,9 +79,10 @@ impl ChatStream {
     /// Accepting a connection from a client:
     /// ```no_run
     /// use std::net::TcpListener;
+    /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream};
     /// 
-    /// fn main() -> std::io::Result<()> {
+    /// fn main() -> Result<(), Box<dyn Error>> {
     ///     let listener = TcpListener::bind("0.0.0.0:7878")?;
     /// 
     ///     let (stream, _) = listener.accept()?;
@@ -132,9 +133,10 @@ impl ChatStream {
     /// Connecting to the server:
     /// ```no_run
     /// use std::net::TcpStream;
+    /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
     /// 
-    /// fn main() -> std::io::Result<()> {
+    /// fn main() -> Result<(), Box<dyn Error>> {
     ///     let stream = TcpStream::connect("127.0.0.1:7878")?;
     ///     let mut stream = ChatStream::new(stream);
     ///     
