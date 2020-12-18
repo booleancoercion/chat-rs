@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::spawn({
         let messages = messages.clone();
-        async move { listen(reader, messages) }
+        async move { listen(reader, messages).await }
     });
 
     handle_input(writer, messages).await?;
@@ -160,7 +160,13 @@ fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box
     };
 
     let to_print = &messages[(messages.len() - fits)..];
-    queue!(stdout, cursor::SavePosition, cursor::MoveTo(0,allowed_rows), terminal::Clear(ClearType::FromCursorUp), cursor::MoveTo(0,0))?;
+    queue!(
+        stdout,
+        cursor::SavePosition,
+        cursor::MoveTo(0,allowed_rows), 
+        terminal::Clear(ClearType::FromCursorUp),
+        cursor::MoveTo(0,0)
+    )?;
     for tuple in to_print {
         let string = &tuple.0;
         queue!(stdout, style::Print(string), cursor::MoveToNextLine(1))?;
