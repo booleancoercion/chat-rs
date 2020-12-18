@@ -1,22 +1,23 @@
-use std::net::{TcpListener, Shutdown};
 use std::io;
 use std::env;
 use std::process;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::sync::mpsc::{self, Sender, Receiver};
 
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Sender, Receiver};
+use tokio::net::TcpListener;
 use log::{error, warn, info, debug, trace, LevelFilter};
 use ctrlc;
 
-use chat_rs::{ChatStream, Msg, MSG_LENGTH};
+use chat_rs::*;
 
 const MAX_USERS: usize = 50;
-type UsersType = Arc<Mutex<HashMap<String, ChatStream>>>;
+type UsersType = Arc<Mutex<HashMap<String, ChatWriterHalf>>>;
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     env_logger::Builder::new()
         .filter_level(LevelFilter::Info)
@@ -38,7 +39,7 @@ fn main() -> io::Result<()> {
     }
     
     info!("Listening to connections on {}:7878", address);
-    let listener = TcpListener::bind(format!("{}:7878", address))
+    let listener = TcpListener::bind(format!("{}:7878", address)).await
         .unwrap_or_else(|err| {
             error!("Error on binding listener: {}", err.to_string());
             process::exit(1);
@@ -52,68 +53,71 @@ fn main() -> io::Result<()> {
         rclone.store(false, Ordering::SeqCst);
         info!("Received CTRL+C, exiting...");
 
-        let users = uclone.lock().unwrap();
+        let uclone = uclone.clone();
         debug!("Acquired users lock");
-        for (nick, stream) in users.iter() {
-            debug!("Shutting down {}'s stream", nick);
-            match stream.inner.shutdown(Shutdown::Both) {
-                Ok(_) => trace!("Stream shutdown successful."),
-                Err(_) => trace!("Stream shutdown failed.")
+        tokio::spawn(async move {
+            let mut users = uclone.lock().await;
+            for (nick, writer) in users.iter_mut() {
+                debug!("Shutting down {}'s stream", nick);
+                let (mut inner, _) = writer.get_writer_cipher();
+                
+                tokio::io::AsyncWriteExt::shutdown(&mut inner).await.unwrap_or(());
             }
-        }
-        process::exit(0);
+            process::exit(0);
+        });
     }).unwrap();
 
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel(32);
     let uclone = users.clone();
 
-    thread::spawn(move || {
-       route_messages(rx, users); 
+    tokio::spawn(async move {
+       route_messages(rx, users).await; 
     });
-    accept_connections(listener, uclone, running.clone(), tx, is_encrypted);
+    accept_connections(listener, uclone, running.clone(), tx, is_encrypted).await;
 
     loop {} // ensures that main waits for ctrlc handler to finish
 }
 
-fn route_messages(rx: Receiver<(Msg, Option<String>)>, users: UsersType) {
+async fn route_messages(mut rx: Receiver<(Msg, Option<String>)>, users: UsersType) {
     loop {
-        let (msg, recepient) = rx.recv().unwrap();
+        let (msg, recepient) = rx.recv().await.unwrap();
         if let None = recepient { // message is to be broadcasted
-            let mut users = users.lock().unwrap();
+            let mut users = users.lock().await;
             for stream in users.values_mut() {
-                stream.send_data(&msg).unwrap_or(()); // ignore failed sends
+                stream.send_msg(&msg).await.unwrap_or(()); // ignore failed sends
             }
         }
     }
 }
 
-fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>,
-        tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
-    for stream in listener.incoming() {
+async fn accept_connections(listener: TcpListener, users: UsersType, running: Arc<AtomicBool>,
+tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
+    loop {
         if !running.load(Ordering::SeqCst) {
             break
         }
-        match stream {
-            Ok(stream) => {
+        match listener.accept().await {
+            Ok((stream, _)) => {
                 let uclone = users.clone();
                 let tx = tx.clone();
-                thread::spawn(move || {
-                    handle_connection(ChatStream::new(stream), uclone, tx, is_encrypted);
+                tokio::spawn(async move {
+                    handle_connection(ChatStream::new(stream), uclone, tx, is_encrypted).await;
                 });
             },
-            Err(_) => continue
+
+            Err(_) => {} // ignore
         }
     }
 }
 
-fn handle_connection(mut stream: ChatStream, users: UsersType,
-        tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
+async fn handle_connection(mut stream: ChatStream, users: UsersType,
+tx: Sender<(Msg, Option<String>)>, is_encrypted: bool) {
     let peer_address = stream.peer_addr().unwrap();
     debug!("Incoming connection from {}", peer_address);
 
     let mut buffer = [0; MSG_LENGTH];
 
-    let nick = match stream.receive_data(&mut buffer) {
+    let nick = match stream.receive_msg(&mut buffer).await {
         Ok(Msg::NickChange(nick)) => nick,
         _ => {
             warn!("{} aborted on nick.", peer_address);
@@ -122,15 +126,15 @@ fn handle_connection(mut stream: ChatStream, users: UsersType,
     };
 
     { // lock users temporarily
-        let userlock = users.lock().unwrap();
+        let userlock = users.lock().await;
         if userlock.len() >= MAX_USERS {
-            stream.send_data(&Msg::ConnectionRejected("too many users".into()))
-                .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+            stream.send_msg(&Msg::ConnectionRejected("too many users".into())).await
+                .unwrap_or(()); // do nothing, we don't need the user anyway
             info!("Rejected {}, too many users", peer_address);
             return
         } else if userlock.contains_key(&nick) {
-            stream.send_data(&Msg::ConnectionRejected("nick taken".into()))
-                .unwrap_or_else(|_| {}); // do nothing, we don't need the user anyway
+            stream.send_msg(&Msg::ConnectionRejected("nick taken".into())).await
+                .unwrap_or(()); // do nothing, we don't need the user anyway
             info!("Rejected {}, nick taken", peer_address);
             return
         }
@@ -141,47 +145,40 @@ fn handle_connection(mut stream: ChatStream, users: UsersType,
         Msg::ConnectionAccepted
     };
 
-    if let Err(e) = stream.send_data(&msg) {
+    if let Err(e) = stream.send_msg(&msg).await {
         warn!("Error accepting {}: {}", peer_address, e.to_string());
         return
     }
 
     if is_encrypted {
-        stream.encrypt().unwrap();
+        stream.encrypt().await.unwrap();
         debug!("Encrypted stream from {}", peer_address);
     }
 
     info!("Connection successful from {}, nick {}", peer_address, nick);
-    tx.send((Msg::NickedConnect(nick.clone()), None)).unwrap();
+    tx.send((Msg::NickedConnect(nick.clone()), None)).await.unwrap();
 
-    let stream_clone = match stream.try_clone() {
-        Ok(stream_clone) => stream_clone,
-        Err(e) => {
-            error!("Couldn't clone stream for {}: {}", peer_address, e.to_string());
-            return
-        }
-    };
-
-    users.lock().unwrap().insert(nick.clone(), stream_clone);
+    let (mut reader, writer) = stream.into_split();
+    users.lock().await.insert(nick.clone(), writer);
 
 
     loop {
-        let msg = match stream.receive_data(&mut buffer) {
+        let msg = match reader.receive_msg(&mut buffer).await {
             Ok(msg) => msg,
             Err(e) => {
                 info!("{} [{}] disconnected.", peer_address, nick);
                 debug!("Associated error: {}", e.to_string());
-                users.lock().unwrap().remove(&nick);
-                tx.send((Msg::NickedDisconnect(nick), None)).unwrap();
+                users.lock().await.remove(&nick);
+                tx.send((Msg::NickedDisconnect(nick), None)).await.unwrap();
                 break
             }
         };
 
         trace!("Msg({}): [{}]: {}", msg.code(), nick, msg.string());
         match msg {
-            Msg::UserMsg(s) => tx.send((Msg::NickedUserMsg(nick.clone(), s), None)),
-            Msg::NickChange(s) => tx.send((Msg::NickedNickChange(nick.clone(), s), None)),
-            Msg::Command(s) => tx.send((Msg::NickedCommand(nick.clone(), s), None)),
+            Msg::UserMsg(s) => tx.send((Msg::NickedUserMsg(nick.clone(), s), None)).await,
+            Msg::NickChange(s) => tx.send((Msg::NickedNickChange(nick.clone(), s), None)).await,
+            Msg::Command(s) => tx.send((Msg::NickedCommand(nick.clone(), s), None)).await,
             _ => Ok(())
         }.unwrap();
     }

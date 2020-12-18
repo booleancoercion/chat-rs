@@ -1,27 +1,26 @@
-use std::net::TcpStream;
 use std::io::{self, prelude::*};
 use std::env;
 use std::process;
 use std::error::Error;
-use std::thread;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
 use crossterm::{execute, queue};
-
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, ClearType};
 use crossterm::style::{self, Colorize, Attribute};
+use tokio::net::TcpStream;
 
-use chat_rs::{ChatStream, Msg, MSG_LENGTH};
+use chat_rs::*;
 
 static INPUT_ROWS: AtomicU16 = AtomicU16::new(1);
 
 type Messages = Arc<Mutex<Vec<(String, u16)>>>;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let address = env::args()
         .nth(1)
         .unwrap_or_else(|| {
@@ -30,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     println!("Connecting to {}:7878", address);
 
-    let mut stream = connect_stream(address).unwrap_or_else(|err| {
+    let mut stream = connect_stream(address).await.unwrap_or_else(|err| {
         eprintln!("Error on connecting: {}", err.to_string());
         process::exit(1);
     });
@@ -38,13 +37,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut buffer = [0u8; MSG_LENGTH];
     
-    stream.send_data(&Msg::NickChange(nick.clone()))?;
+    stream.send_msg(&Msg::NickChange(nick.clone())).await?;
 
-    match stream.receive_data(&mut buffer) {
+    match stream.receive_msg(&mut buffer).await {
         Ok(Msg::ConnectionAccepted) => println!("Connected."),
         Ok(Msg::ConnectionEncrypted) => {
             println!("Connected. Encrypting...");
-            stream.encrypt()?;
+            stream.encrypt().await?;
         },
         Ok(msg) => {
             eprintln!("Server refused connection: {}", msg.string());
@@ -58,26 +57,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     let messages = Arc::from(Mutex::from(Vec::new()));
 
-    thread::spawn({
-        let stream = stream.try_clone()?;
+    let (reader, writer) = stream.into_split();
+
+    tokio::spawn({
         let messages = messages.clone();
-        || { listen(stream, messages) }
+        async move { listen(reader, messages) }
     });
 
-    handle_input(stream, messages)?;
+    handle_input(writer, messages).await?;
     Ok(())
 }
 
-fn connect_stream(address: String) -> Result<ChatStream, io::Error> {
-    let stream = TcpStream::connect(format!("{}:7878", address))?;
+async fn connect_stream(address: String) -> Result<ChatStream, io::Error> {
+    let stream = TcpStream::connect(format!("{}:7878", address)).await?;
     Ok(ChatStream::new(stream))
 }
 
-fn listen(mut stream: ChatStream, messages: Messages) {
+async fn listen(mut reader: ChatReaderHalf, messages: Messages) {
     let mut buffer = [0u8; MSG_LENGTH];
     let mut stdout = io::stdout();
     loop {
-        let msg = match stream.receive_data(&mut buffer) {
+        let msg = match reader.receive_msg(&mut buffer).await {
             Err(_) => {
                 execute!(stdout, terminal::LeaveAlternateScreen).unwrap();
                 terminal::disable_raw_mode().unwrap();
@@ -171,7 +171,7 @@ fn draw_messages(messages: &Messages, stdout: &mut io::Stdout) -> Result<(), Box
     Ok(())
 }
 
-fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dyn Error>>{
+async fn handle_input(mut writer: ChatWriterHalf, messages: Messages) -> Result<(), Box<dyn Error>>{
     let mut stdout = io::stdout();
 
     terminal::enable_raw_mode()?;
@@ -186,10 +186,10 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
             let do_break = handle_key_event(
                 event,
                 &mut string,
-                &mut stream,
+                &mut writer,
                 &mut stdout,
                 &messages
-            )?;
+            ).await?;
             
             if do_break {
                 break
@@ -205,7 +205,7 @@ fn handle_input(mut stream: ChatStream, messages: Messages) -> Result<(), Box<dy
     Ok(())
 }
 
-fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut ChatStream, stdout: &mut io::Stdout,
+async fn handle_key_event(event: event::KeyEvent, string: &mut String, writer: &mut ChatWriterHalf, stdout: &mut io::Stdout,
                     messages: &Messages)
         -> Result<bool, Box<dyn Error>> {
     
@@ -216,7 +216,7 @@ fn handle_key_event(event: event::KeyEvent, string: &mut String, stream: &mut Ch
 
     } else if event.code == KeyCode::Enter {
         if string.len() > 0 {
-            stream.send_data(&Msg::UserMsg(string.clone()))?;
+            writer.send_msg(&Msg::UserMsg(string.clone())).await?;
             string.clear();
             queue!(stdout, terminal::Clear(ClearType::FromCursorUp))?;
         }
