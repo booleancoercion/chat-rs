@@ -7,7 +7,7 @@ use iced::{Element, Sandbox, Settings, Text, Column, button, Button,
            text_input, TextInput, Length, HorizontalAlignment, Container,
            Align};
 
-use chat_rs::{ChatStream, Msg, MSG_LENGTH};
+use chat_rs::*;
 
 pub fn main() -> iced::Result {
     ChatClient::run(Settings::default())
@@ -64,39 +64,7 @@ impl Sandbox for ChatClient {
                 match message {
                     AddressChanged(s) => *text_addr_val = s,
                     NickChanged(s) => *text_nick_val = s,
-                    ButtonPressed => {
-                        let stream = TcpStream::connect(format!("{}:7878", text_addr_val)).unwrap();
-                        let mut stream = ChatStream::new(stream);
-
-                        let mut buffer = [0u8; MSG_LENGTH];
-    
-                        stream.send_data(&Msg::NickChange(text_nick_val.clone())).unwrap();
-
-                        match stream.receive_data(&mut buffer) {
-                            Ok(Msg::ConnectionAccepted) => println!("Connected."),
-                            Ok(Msg::ConnectionEncrypted) => {
-                                println!("Connected. Encrypting...");
-                                stream.encrypt().unwrap();
-                            },
-                            Ok(msg) => {
-                                eprintln!("Server refused connection: {}", msg.string());
-                                process::exit(0)
-                            },
-                            Err(e) => {
-                                println!("Error connecting to server: {}", e.to_string());
-                                process::exit(0)
-                            }
-                        }
-                        
-                        let peer_addr = stream.peer_addr().unwrap();
-
-                        *self = ChatClient::Ready {
-                            messages: vec![],
-                            stream,
-                            peer_addr,
-                            state: ReadyState::default()
-                        }
-                    }
+                    _ => {}
                 }
             },
 
