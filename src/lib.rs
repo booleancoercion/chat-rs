@@ -22,6 +22,7 @@ pub const ECDH_PUBLIC_LEN: usize = 33;
 /// This struct contains methods useful for sending and receiving information
 /// using BCMP, and is highly recommended for working consistently between the
 /// server and the client.
+#[derive(Debug)]
 pub struct ChatStream {
     pub inner: TcpStream,
     cipher: Option<Aes256> // 256-bit key
@@ -198,7 +199,7 @@ impl ChatStream {
 }
 
 /// An enum representing a Server/Client message
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Msg {
     UserMsg(String),
     NickedUserMsg(String, String),
