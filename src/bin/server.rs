@@ -55,7 +55,7 @@ async fn main() -> io::Result<()> {
 
         let uclone = uclone.clone();
         debug!("Acquired users lock");
-        tokio::spawn(async move {
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
             let mut users = uclone.lock().await;
             for (nick, writer) in users.iter_mut() {
                 debug!("Shutting down {}'s stream", nick);
