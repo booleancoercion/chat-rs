@@ -1,6 +1,6 @@
 [package]
 name = "chat-rs"
-version = "0.2.0"
+version = "1.0.0"
 authors = ["boolean_coercion <booleancoercion@gmail.com>"]
 edition = "2018"
 
@@ -18,3 +18,4 @@ hkdf = "0.10.0"
 sha2 = "0.9.2"
 anyhow = "1.0.35"
 iced = "0.2.0"
+tokio = { version="0.3.6", features=["full"] }

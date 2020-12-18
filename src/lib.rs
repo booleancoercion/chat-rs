@@ -3,8 +3,10 @@
 //! This crate contains useful structs, methods and enums for dealing with BCMP
 //! messages, e.g. `ChatStream` and `Msg`.
 
-use std::io::{self, prelude::*};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
+
+use tokio::net::TcpStream;
+use tokio::prelude::*;
 use k256::{EncodedPoint, ecdh::EphemeralSecret};
 use rand_core::OsRng;
 use hkdf::Hkdf;
@@ -44,7 +46,7 @@ impl ChatStream {
     /// 
     /// Calling this function when the stream is already encrypted
     /// will do nothing.
-    pub fn encrypt(&mut self) -> Result<()> {
+    pub async fn encrypt(&mut self) -> Result<()> {
         if self.cipher.is_some() {
             return Ok(())
         }
@@ -52,10 +54,11 @@ impl ChatStream {
         let my_public = EncodedPoint::from(&my_secret);
 
         let public_bytes = my_public.as_bytes(); // The length of this should be exactly ECDH_PUBLIC_LEN bytes
-        self.inner.write_all(public_bytes)?;
+        self.inner.write_all(public_bytes).await?;
+        self.inner.flush().await?;
 
         let mut other_public_bytes = [0u8; ECDH_PUBLIC_LEN];
-        self.inner.read_exact(&mut other_public_bytes)?;
+        self.inner.read_exact(&mut other_public_bytes).await?;
         let other_public = EncodedPoint::from_bytes(&other_public_bytes)?;
 
         let shared = my_secret.diffie_hellman(&other_public)?;
@@ -79,22 +82,23 @@ impl ChatStream {
     /// 
     /// Accepting a connection from a client:
     /// ```no_run
-    /// use std::net::TcpListener;
+    /// use tokio::net::TcpListener;
     /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream};
     /// 
-    /// fn main() -> Result<(), Box<dyn Error>> {
-    ///     let listener = TcpListener::bind("0.0.0.0:7878")?;
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn Error>> {
+    ///     let listener = TcpListener::bind("0.0.0.0:7878").await?;
     /// 
-    ///     let (stream, _) = listener.accept()?;
+    ///     let (stream, _) = listener.accept().await?;
     ///     let mut stream = ChatStream::new(stream);
     ///     
-    ///     stream.send_data(&Msg::ConnectionAccepted)?;
+    ///     stream.send_data(&Msg::ConnectionAccepted).await?;
     /// 
     ///     Ok(())
     /// }
     /// ```
-    pub fn send_data(&mut self, msg: &Msg) -> Result<()> {
+    pub async fn send_data(&mut self, msg: &Msg) -> Result<()> {
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
         if self.cipher.is_some() { buffer.push(0); }
         buffer.extend(&msg.encode_header());
@@ -121,8 +125,8 @@ impl ChatStream {
                 cipher.encrypt_block(block);
             }
         }
-        self.inner.write_all(&buffer)?;
-        self.inner.flush()?;
+        self.inner.write_all(&buffer).await?;
+        self.inner.flush().await?;
         Ok(())
     }
 
@@ -133,31 +137,32 @@ impl ChatStream {
     /// 
     /// Connecting to the server:
     /// ```no_run
-    /// use std::net::TcpStream;
+    /// use tokio::net::TcpStream;
     /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
     /// 
-    /// fn main() -> Result<(), Box<dyn Error>> {
-    ///     let stream = TcpStream::connect("127.0.0.1:7878")?;
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn Error>> {
+    ///     let stream = TcpStream::connect("127.0.0.1:7878").await?;
     ///     let mut stream = ChatStream::new(stream);
     ///     
     ///     let mut buffer = [0u8; MSG_LENGTH];
-    ///     let msg = stream.receive_data(&mut buffer)?;
+    ///     let msg = stream.receive_data(&mut buffer).await?;
     ///     // msg should be an accept/reject response
     /// 
     ///     Ok(())
     /// }
     /// ```
-    pub fn receive_data(&mut self, buffer: &mut [u8]) -> Result<Msg> {
+    pub async fn receive_data(&mut self, buffer: &mut [u8]) -> Result<Msg> {
         let (code, length) = if let Some(cipher) = self.cipher.as_ref() {
-            self.inner.read_exact(&mut buffer[0..1])?;
+            self.inner.read_exact(&mut buffer[0..1]).await?;
             let blocks = buffer[0] as usize;
 
             if blocks*16 + 1 > MSG_LENGTH {
                 bail!("Received invalid block amount (too big)");
             }
 
-            self.inner.read_exact(&mut buffer[1..(1+blocks*16)])?;
+            self.inner.read_exact(&mut buffer[1..(1+blocks*16)]).await?;
 
             for chunk in (&mut buffer[1..]).chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
@@ -166,7 +171,7 @@ impl ChatStream {
 
             Msg::parse_header(&buffer[1..4])
         } else {
-            self.inner.read_exact(&mut buffer[0..3])?;
+            self.inner.read_exact(&mut buffer[0..3]).await?;
             Msg::parse_header(&buffer[0..3])
         };
 
@@ -177,7 +182,7 @@ impl ChatStream {
         let string = if self.cipher.is_some() {
             String::from_utf8_lossy(&buffer[4..length+4]).to_string()
         } else {
-            self.inner.read_exact(&mut buffer[3..length+3])?;
+            self.inner.read_exact(&mut buffer[3..length+3]).await?;
             String::from_utf8_lossy(&buffer[3..length+3]).to_string()
         };
     
@@ -185,11 +190,6 @@ impl ChatStream {
             Some(msg) => Ok(msg),
             None => Err(anyhow!("Received invalid message code"))
         }
-    }
-
-    /// Tries to clone itself using `TcpStream::try_clone()` on the underlying stream.
-    pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(ChatStream { inner: self.inner.try_clone()?, cipher: self.cipher.clone() })
     }
 
     /// Convenience method for `TcpStream::peer_addr()`
