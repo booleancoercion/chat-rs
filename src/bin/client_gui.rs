@@ -12,7 +12,11 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use chat_rs::*;
-use iced_mpsc::Mpsc;
+
+#[path = "../listen.rs"]
+mod listen;
+
+use listen::*;
 
 pub fn main() -> iced::Result {
     ChatClient::run(Settings::default())
@@ -21,10 +25,10 @@ pub fn main() -> iced::Result {
 enum ChatClient {
     Error(String),
     Login(LoginState),
-    Connecting(Box<Option<(ChatStream, Mpsc<Msg>)>>),
+    Connecting,
     Ready {
         messages: Vec<Msg>,
-        msg_mpsc: iced_mpsc::Mpsc<Msg>,
+        listener: Listen,
         writer_channel: mpsc::Sender<Msg>,
         peer_addr: std::net::SocketAddr,
         state: ReadyState,
@@ -88,7 +92,7 @@ impl Application for ChatClient {
                         let address = text_addr_val.clone();
                         let nick = text_nick_val.clone();
 
-                        *self = ChatClient::Connecting(Box::new(None));
+                        *self = ChatClient::Connecting;
                         return Command::perform(
                             async move {
                                 let stream =
@@ -120,34 +124,23 @@ impl Application for ChatClient {
                 }
             }
 
-            ChatClient::Connecting(opt) => match message {
+            ChatClient::Connecting => match message {
                 AppMessage::Connected(stream) => {
                     let stream = stream.lock().unwrap().take().unwrap();
-                    let mpsc = Mpsc::new(32);
-                    opt.replace((stream, mpsc));
-                }
-
-                AppMessage::Sender(mut sender) => {
-                    let (stream, mpsc) = opt.take().unwrap();
                     let peer_addr = stream.peer_addr().unwrap();
-                    let (mut reader, mut writer) = stream.into_split();
+
+                    let (reader, mut writer) = stream.into_split();
+                    let listener = Listen::new(reader);
 
                     let (tx, mut rx) = mpsc::channel::<Msg>(32);
 
                     *self = ChatClient::Ready {
                         messages: vec![],
-                        msg_mpsc: mpsc,
+                        listener,
                         writer_channel: tx,
                         peer_addr,
                         state: ReadyState::default(),
                     };
-
-                    tokio::spawn(async move {
-                        let mut buffer = [0u8; MSG_LENGTH];
-                        while let Ok(msg) = reader.receive_msg(&mut buffer).await {
-                            sender.start_send(msg).unwrap();
-                        }
-                    });
 
                     tokio::spawn(async move {
                         while let Some(msg) = rx.recv().await {
@@ -285,7 +278,7 @@ impl Application for ChatClient {
                     .into()
             }
 
-            ChatClient::Connecting(_) => {
+            ChatClient::Connecting => {
                 let title = Text::new("Connecting...")
                     .width(Length::Fill)
                     .size(100)
@@ -364,21 +357,7 @@ impl Application for ChatClient {
 
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
-            ChatClient::Ready { msg_mpsc: mpsc, .. } => mpsc.sub().map(|message| match message {
-                iced_mpsc::Message::Sender(sender) => AppMessage::Sender(sender),
-                iced_mpsc::Message::Received(msg) => AppMessage::ChatMsg(msg),
-            }),
-
-            ChatClient::Connecting(x) => {
-                if let Some((_, mpsc)) = &**x {
-                    mpsc.sub().map(|message| match message {
-                        iced_mpsc::Message::Sender(sender) => AppMessage::Sender(sender),
-                        iced_mpsc::Message::Received(msg) => AppMessage::ChatMsg(msg),
-                    })
-                } else {
-                    Subscription::none()
-                }
-            }
+            ChatClient::Ready { listener, .. } => listener.sub().map(AppMessage::ChatMsg),
 
             _ => Subscription::none(),
         }
@@ -391,7 +370,6 @@ enum AppMessage {
     NickChanged(String),
     ButtonPressed,
     Connected(Arc<Mutex<Option<ChatStream>>>),
-    Sender(iced_mpsc::Sender<Msg>),
     ChatMsg(Msg),
     InputChanged(String),
     Send,
