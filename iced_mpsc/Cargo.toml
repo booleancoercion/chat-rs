@@ -1,0 +1,10 @@
+[package]
+name = "iced_mpsc"
+version = "0.1.0"
+authors = ["Duncan Freeman <duncan.freeman1@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+iced = "0.2"
+iced_futures = "0.2"
+iced_native = "0.2"

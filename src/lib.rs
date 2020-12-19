@@ -47,7 +47,7 @@ pub trait SendMsg {
     /// ```no_run
     /// use tokio::net::TcpListener;
     /// use std::error::Error;
-    /// use chat_rs::{Msg, ChatStream};
+    /// use chat_rs::{Msg, ChatStream, SendMsg};
     /// 
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
@@ -111,7 +111,7 @@ pub trait ReceiveMsg {
     /// ```no_run
     /// use tokio::net::TcpStream;
     /// use std::error::Error;
-    /// use chat_rs::{Msg, ChatStream, MSG_LENGTH};
+    /// use chat_rs::{Msg, ChatStream, MSG_LENGTH, ReceiveMsg};
     /// 
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
