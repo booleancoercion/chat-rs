@@ -1,6 +1,6 @@
 [package]
 name = "chat-rs"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["boolean_coercion <booleancoercion@gmail.com>"]
 edition = "2018"
 
@@ -17,8 +17,7 @@ k256 = { version="0.5", features=["ecdh"] }
 hkdf = "0.10"
 sha2 = "0.9"
 anyhow = "1.0"
-iced = { version="0.2", features=["tokio"] }
+iced = { version="0.2", features=["tokio", "glow"] }
 iced_futures = "0.2"
 tokio = { version="0.3", features=["full"] }
 async-trait = "0.1"
-iced_mpsc = { path ="iced_mpsc/" }
