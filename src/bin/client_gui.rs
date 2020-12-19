@@ -21,7 +21,7 @@ pub fn main() -> iced::Result {
 enum ChatClient {
     Error(String),
     Login(LoginState),
-    Connecting(Option<(ChatStream, Mpsc<Msg>)>),
+    Connecting(Box<Option<(ChatStream, Mpsc<Msg>)>>),
     Ready {
         messages: Vec<Msg>,
         msg_mpsc: iced_mpsc::Mpsc<Msg>,
@@ -88,7 +88,7 @@ impl Application for ChatClient {
                         let address = text_addr_val.clone();
                         let nick = text_nick_val.clone();
 
-                        *self = ChatClient::Connecting(None);
+                        *self = ChatClient::Connecting(Box::new(None));
                         return Command::perform(
                             async move {
                                 let stream =
@@ -364,11 +364,20 @@ impl Application for ChatClient {
 
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
-            ChatClient::Ready { msg_mpsc: mpsc, .. } | ChatClient::Connecting(Some((_, mpsc))) => {
-                mpsc.sub().map(|message| match message {
-                    iced_mpsc::Message::Sender(sender) => AppMessage::Sender(sender),
-                    iced_mpsc::Message::Received(msg) => AppMessage::ChatMsg(msg),
-                })
+            ChatClient::Ready { msg_mpsc: mpsc, .. } => mpsc.sub().map(|message| match message {
+                iced_mpsc::Message::Sender(sender) => AppMessage::Sender(sender),
+                iced_mpsc::Message::Received(msg) => AppMessage::ChatMsg(msg),
+            }),
+
+            ChatClient::Connecting(x) => {
+                if let Some((_, mpsc)) = &**x {
+                    mpsc.sub().map(|message| match message {
+                        iced_mpsc::Message::Sender(sender) => AppMessage::Sender(sender),
+                        iced_mpsc::Message::Received(msg) => AppMessage::ChatMsg(msg),
+                    })
+                } else {
+                    Subscription::none()
+                }
             }
 
             _ => Subscription::none(),

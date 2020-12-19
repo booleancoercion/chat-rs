@@ -367,7 +367,7 @@ impl Msg {
     fn nicked_join(nick: &str, other: &str) -> String {
         let mut output = nick.to_string();
         output.push('\0');
-        output.extend(other.chars());
+        output.push_str(other);
         output
     }
 
