@@ -222,7 +222,7 @@ async fn handle_key_event(
     if event.modifiers.contains(KeyModifiers::CONTROL) && event.code == KeyCode::Char('c') {
         return Ok(true);
     } else if event.code == KeyCode::Enter {
-        if string.len() > 0 {
+        if !string.is_empty() {
             writer.send_msg(&Msg::UserMsg(string.clone())).await?;
             string.clear();
             queue!(stdout, terminal::Clear(ClearType::FromCursorUp))?;
@@ -230,7 +230,7 @@ async fn handle_key_event(
         draw_messages(messages, stdout)?;
         INPUT_ROWS.store(1, Ordering::SeqCst);
         execute!(stdout, cursor::MoveTo(0, y))?;
-    } else if event.code == KeyCode::Backspace && string.len() > 0 {
+    } else if event.code == KeyCode::Backspace && !string.is_empty() {
         string.pop();
         let (posx, posy) = cursor::position()?;
         if posx == 0 {

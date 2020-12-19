@@ -5,7 +5,6 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use ctrlc;
 use log::{debug, error, info, trace, warn, LevelFilter};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -79,13 +78,15 @@ async fn main() -> io::Result<()> {
     });
     accept_connections(listener, uclone, running.clone(), tx, is_encrypted).await;
 
-    loop {} // ensures that main waits for ctrlc handler to finish
+    loop {
+        std::thread::yield_now()
+    } // ensures that main waits for ctrlc handler to finish
 }
 
 async fn route_messages(mut rx: Receiver<(Msg, Option<String>)>, users: UsersType) {
     loop {
         let (msg, recepient) = rx.recv().await.unwrap();
-        if let None = recepient {
+        if recepient.is_none() {
             // message is to be broadcasted
             let mut users = users.lock().await;
             for stream in users.values_mut() {
@@ -106,16 +107,12 @@ async fn accept_connections(
         if !running.load(Ordering::SeqCst) {
             break;
         }
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let uclone = users.clone();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    handle_connection(ChatStream::new(stream), uclone, tx, is_encrypted).await;
-                });
-            }
-
-            Err(_) => {} // ignore
+        if let Ok((stream, _)) = listener.accept().await {
+            let uclone = users.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                handle_connection(ChatStream::new(stream), uclone, tx, is_encrypted).await;
+            });
         }
     }
 }
