@@ -5,16 +5,19 @@
 
 use std::net::SocketAddr;
 
-use tokio::net::{TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}};
-use tokio::prelude::*;
-use k256::{EncodedPoint, ecdh::EphemeralSecret};
-use rand_core::OsRng;
-use hkdf::Hkdf;
-use sha2::Sha256;
+use aes::cipher::{generic_array::GenericArray, BlockCipher, NewBlockCipher};
 use aes::Aes256;
-use aes::cipher::{BlockCipher, NewBlockCipher, generic_array::GenericArray};
-use anyhow::{Result, bail, anyhow};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
+use hkdf::Hkdf;
+use k256::{ecdh::EphemeralSecret, EncodedPoint};
+use rand_core::OsRng;
+use sha2::Sha256;
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
+};
+use tokio::prelude::*;
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
@@ -28,7 +31,7 @@ pub const ECDH_PUBLIC_LEN: usize = 33;
 #[derive(Debug)]
 pub struct ChatStream {
     pub inner: TcpStream,
-    cipher: Option<Aes256> // 256-bit key
+    cipher: Option<Aes256>, // 256-bit key
 }
 
 #[async_trait]
@@ -40,24 +43,24 @@ pub trait SendMsg {
     /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
     /// successful.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// Accepting a connection from a client:
     /// ```no_run
     /// use tokio::net::TcpListener;
     /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream, SendMsg};
-    /// 
+    ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
     ///     let listener = TcpListener::bind("0.0.0.0:7878").await?;
-    /// 
+    ///
     ///     let (stream, _) = listener.accept().await?;
     ///     let mut stream = ChatStream::new(stream);
     ///     
     ///     stream.send_msg(&Msg::ConnectionAccepted).await?;
-    /// 
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -65,18 +68,22 @@ pub trait SendMsg {
         let (writer, cipher) = self.get_writer_cipher();
 
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
-        if cipher.is_some() { buffer.push(0); }
+        if cipher.is_some() {
+            buffer.push(0);
+        }
         buffer.extend(&msg.encode_header());
         buffer.extend(msg.string().as_bytes());
-        
-        if buffer.len() > MSG_LENGTH { bail!("Attempted to send an invalid-length message (too big)"); }
+
+        if buffer.len() > MSG_LENGTH {
+            bail!("Attempted to send an invalid-length message (too big)");
+        }
 
         if let Some(cipher) = cipher {
             let msg_len = buffer.len() - 1;
             let blocks = {
-                let temp = msg_len/16;
-                if temp*16 < msg_len {
-                    buffer.extend([0].repeat((temp+1)*16 - msg_len));
+                let temp = msg_len / 16;
+                if temp * 16 < msg_len {
+                    buffer.extend([0].repeat((temp + 1) * 16 - msg_len));
                     temp + 1
                 } else {
                     temp
@@ -84,7 +91,7 @@ pub trait SendMsg {
             } as u8;
 
             buffer[0] = blocks;
-            
+
             for chunk in (&mut buffer[1..]).chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
                 cipher.encrypt_block(block);
@@ -104,15 +111,15 @@ pub trait ReceiveMsg {
 
     /// Receive a BCMP formatted message, using the provided buffer
     /// as a means for memory efficiency. Buffer must be of length `MSG_LENGTH` at least.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// Connecting to the server:
     /// ```no_run
     /// use tokio::net::TcpStream;
     /// use std::error::Error;
     /// use chat_rs::{Msg, ChatStream, MSG_LENGTH, ReceiveMsg};
-    /// 
+    ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
     ///     let stream = TcpStream::connect("127.0.0.1:7878").await?;
@@ -121,7 +128,7 @@ pub trait ReceiveMsg {
     ///     let mut buffer = [0u8; MSG_LENGTH];
     ///     let msg = stream.receive_msg(&mut buffer).await?;
     ///     // msg should be an accept/reject response
-    /// 
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -132,11 +139,11 @@ pub trait ReceiveMsg {
             reader.read_exact(&mut buffer[0..1]).await?;
             let blocks = buffer[0] as usize;
 
-            if blocks*16 + 1 > MSG_LENGTH {
+            if blocks * 16 + 1 > MSG_LENGTH {
                 bail!("Received invalid block amount (too big)");
             }
 
-            reader.read_exact(&mut buffer[1..(1+blocks*16)]).await?;
+            reader.read_exact(&mut buffer[1..(1 + blocks * 16)]).await?;
 
             for chunk in (&mut buffer[1..]).chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
@@ -152,17 +159,17 @@ pub trait ReceiveMsg {
         if length + 3 > MSG_LENGTH {
             bail!("Received invalid message length (too big)");
         }
-        
+
         let string = if cipher.is_some() {
-            String::from_utf8_lossy(&buffer[4..length+4]).to_string()
+            String::from_utf8_lossy(&buffer[4..length + 4]).to_string()
         } else {
-            reader.read_exact(&mut buffer[3..length+3]).await?;
-            String::from_utf8_lossy(&buffer[3..length+3]).to_string()
+            reader.read_exact(&mut buffer[3..length + 3]).await?;
+            String::from_utf8_lossy(&buffer[3..length + 3]).to_string()
         };
-    
+
         match Msg::from_parts(code, string) {
             Some(msg) => Ok(msg),
-            None => Err(anyhow!("Received invalid message code"))
+            None => Err(anyhow!("Received invalid message code")),
         }
     }
 }
@@ -173,18 +180,18 @@ impl ChatStream {
     pub fn new(stream: TcpStream) -> Self {
         ChatStream {
             inner: stream,
-            cipher: None
+            cipher: None,
         }
     }
 
     /// Encrypts the current ChatStream.
     /// NOTE: This operation must be executed on both ends to work.
-    /// 
+    ///
     /// Calling this function when the stream is already encrypted
     /// will do nothing.
     pub async fn encrypt(&mut self) -> Result<()> {
         if self.cipher.is_some() {
-            return Ok(())
+            return Ok(());
         }
         let my_secret = EphemeralSecret::random(&mut OsRng);
         let my_public = EncodedPoint::from(&my_secret);
@@ -204,7 +211,7 @@ impl ChatStream {
         let mut key = [0u8; 32];
         hk.expand(&[], &mut key)
             .expect("hk.expand got invalid length - this should never ever happen!");
-        
+
         let key = GenericArray::from_slice(&key);
         self.cipher = Some(Aes256::new(&key));
         Ok(())
@@ -222,12 +229,12 @@ impl ChatStream {
 
         let reader = ChatReaderHalf {
             inner: read,
-            cipher: self.cipher.clone()
+            cipher: self.cipher.clone(),
         };
 
         let writer = ChatWriterHalf {
             inner: write,
-            cipher: self.cipher
+            cipher: self.cipher,
         };
 
         (reader, writer)
@@ -250,10 +257,9 @@ impl ReceiveMsg for ChatStream {
     }
 }
 
-
 pub struct ChatReaderHalf {
     inner: OwnedReadHalf,
-    cipher: Option<Aes256>
+    cipher: Option<Aes256>,
 }
 
 impl ReceiveMsg for ChatReaderHalf {
@@ -266,7 +272,7 @@ impl ReceiveMsg for ChatReaderHalf {
 
 pub struct ChatWriterHalf {
     inner: OwnedWriteHalf,
-    cipher: Option<Aes256>
+    cipher: Option<Aes256>,
 }
 
 impl SendMsg for ChatWriterHalf {
@@ -294,12 +300,13 @@ pub enum Msg {
 
     ConnectionEncrypted,
     ConnectionAccepted,
-    ConnectionRejected(String)
+    ConnectionRejected(String),
 }
 
 impl Msg {
     /// Returns the numeral code of the message type.
-    pub fn code(&self) -> u8 { // if you change this, CHANGE FROM_PARTS AND STRING TOO!!
+    pub fn code(&self) -> u8 {
+        // if you change this, CHANGE FROM_PARTS AND STRING TOO!!
         use Msg::*;
         match self {
             UserMsg(_) => 0,
@@ -307,13 +314,13 @@ impl Msg {
 
             NickChange(_) => 1,
             NickedNickChange(_, _) => 101,
-            
+
             NickedConnect(_) => 98,
             NickedDisconnect(_) => 99,
 
             Command(_) => 3,
             NickedCommand(_, _) => 103,
-            
+
             ConnectionEncrypted => 253,
             ConnectionAccepted => 254,
             ConnectionRejected(_) => 255,
@@ -336,13 +343,13 @@ impl Msg {
             _ => {
                 let (a, b) = match Self::nicked_split(string) {
                     Some((a, b)) => (a, b),
-                    None => return None
+                    None => return None,
                 };
                 match code {
                     100 => Some(NickedUserMsg(a, b)),
                     101 => Some(NickedNickChange(a, b)),
                     103 => Some(NickedCommand(a, b)),
-                    _ => None
+                    _ => None,
                 }
             }
         }
@@ -351,7 +358,7 @@ impl Msg {
     fn nicked_split(string: String) -> Option<(String, String)> {
         let split_point = match string.find('\0') {
             Some(n) => n,
-            None => return None
+            None => return None,
         };
         let (nick, other) = string.split_at(split_point);
         Some((nick.into(), other[1..].into()))
@@ -375,13 +382,13 @@ impl Msg {
 
             NickChange(s) => s.to_string(),
             NickedNickChange(n, s) => Self::nicked_join(n, s),
-            
+
             NickedConnect(n) => n.to_string(),
             NickedDisconnect(n) => n.to_string(),
 
             Command(s) => s.to_string(),
             NickedCommand(n, s) => Self::nicked_join(n, s),
-            
+
             ConnectionEncrypted => String::from("connection encrypted; commence ECDH"),
             ConnectionAccepted => String::from("connection accepted"),
             ConnectionRejected(s) => s.to_string(),
