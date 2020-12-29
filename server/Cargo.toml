@@ -15,4 +15,4 @@ chat-rs = { path = "../" }
 
 [dependencies.tokio]
 version = "0.3"
-features = ["net", "sync", "rt", "rt-multi-thread"]
+features = ["net", "sync", "rt", "rt-multi-thread", "macros"]
