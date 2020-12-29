@@ -63,7 +63,7 @@ jobs:
 
     - name: Build server (Windows)
       run: cargo build --verbose
-       working-directory: ./server
+      working-directory: ./server
         
     - name: Build client_term (Windows)
       run: cargo build --verbose
