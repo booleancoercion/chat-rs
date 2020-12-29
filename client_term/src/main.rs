@@ -1,16 +1,21 @@
-use std::env;
-use std::error::Error;
-use std::io::{self, prelude::*};
-use std::process;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Mutex};
+use std::{
+    env,
+    error::Error,
+    io::{self, prelude::*},
+    process,
+    sync::{
+        atomic::{AtomicU16, Ordering},
+        Arc, Mutex
+    }
+};
 
-use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::style::{self, Attribute, Colorize};
-use crossterm::terminal::{self, ClearType};
-#[allow(unused_imports)]
-use crossterm::{execute, queue};
+use crossterm::{
+    cursor,
+    event::{self, Event, KeyCode, KeyModifiers},
+    style::{self, Attribute, Colorize},
+    terminal::{self, ClearType},
+    execute, queue
+};
 use tokio::net::TcpStream;
 
 use chat_rs::*;
