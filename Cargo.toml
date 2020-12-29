@@ -16,3 +16,7 @@ sha2 = "0.9"
 anyhow = "1.0"
 tokio = { version = "0.3", features = ["net", "io-util"] }
 async-trait = "0.1"
+
+[dev-dependencies.tokio]
+version = "0.3"
+features = ["net", "macros", "rt", "rt-multi-thread"]
