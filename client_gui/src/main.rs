@@ -2,21 +2,24 @@
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::{bail, Result};
+use anyhow::bail;
 use iced::{
-    button, executor, scrollable, text_input, Align, Application, Button, Color, Column, Command,
-    Container, Element, HorizontalAlignment, Length, Row, Scrollable, Settings, Subscription, Text,
-    TextInput,
+    button, executor, scrollable, text_input, Align, Application,
+    Button, Column, Command, Container, Element,
+    HorizontalAlignment, Length, Row, Scrollable, Settings,
+    Subscription, Text, TextInput,
 };
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use chat_rs::*;
 
-#[path = "../listen.rs"]
 mod listen;
+mod style;
+mod messages;
 
 use listen::*;
+use messages::AppMessage;
 
 pub fn main() -> iced::Result {
     ChatClient::run(Settings::default())
@@ -311,7 +314,7 @@ impl Application for ChatClient {
                     .spacing(5);
 
                 for msg in messages {
-                    messages_scroll = messages_scroll.push(visualise_msg(msg));
+                    messages_scroll = messages_scroll.push(messages::visualise_msg(msg));
                 }
 
                 let msg_input = TextInput::new(
@@ -360,178 +363,6 @@ impl Application for ChatClient {
             ChatClient::Ready { listener, .. } => listener.sub().map(AppMessage::ChatMsg),
 
             _ => Subscription::none(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum AppMessage {
-    AddressChanged(String),
-    NickChanged(String),
-    ButtonPressed,
-    Connected(Arc<Mutex<Option<ChatStream>>>),
-    ChatMsg(Msg),
-    InputChanged(String),
-    Send,
-    Sent(()),
-
-    Error(String),
-}
-
-impl AppMessage {
-    pub fn or_error<T>(
-        g: impl (Fn(T) -> AppMessage) + 'static + Send,
-    ) -> impl Fn(Result<T>) -> AppMessage + 'static + Send {
-        move |r| match r {
-            Ok(val) => g(val),
-            Err(err) => AppMessage::Error(format!("{}", err)),
-        }
-    }
-}
-
-fn visualise_msg(msg: &Msg) -> Element<'static, AppMessage> {
-    use Msg::*;
-
-    match msg {
-        NickedUserMsg(nick, message) => {
-            let nick_text = Text::new(nick)
-                .size(14)
-                .color(Color::from_rgb8(248, 47, 58));
-
-            let message_text = Text::new(message).size(14).color(Color::from_rgb8(0, 0, 0));
-
-            let content = Column::new()
-                .align_items(Align::Start)
-                .height(Length::Shrink)
-                .width(Length::Shrink)
-                .spacing(10)
-                .padding(10)
-                .push(nick_text)
-                .push(message_text);
-
-            Container::new(content)
-                .height(Length::Shrink)
-                .width(Length::Shrink)
-                .style(style::Container::UserMessage)
-                .into()
-        }
-        NickedNickChange(prev, curr) => {
-            let prev_text = Text::new(prev)
-                .size(14)
-                .color(Color::from_rgb8(248, 47, 58));
-            // set font
-
-            let message_text = Text::new(" has changed their nickname to ")
-                .size(14)
-                .color(Color::from_rgb8(45, 45, 45));
-            // set font
-
-            let curr_text = Text::new(curr)
-                .size(14)
-                .color(Color::from_rgb8(248, 47, 58));
-            // set font
-
-            let content = Row::new()
-                .align_items(Align::Center)
-                .height(Length::Shrink)
-                .width(Length::Shrink)
-                .spacing(0)
-                .padding(10)
-                .push(prev_text)
-                .push(message_text)
-                .push(curr_text);
-
-            Container::new(content)
-                .height(Length::Shrink)
-                .width(Length::Shrink)
-                .style(style::Container::SystemMessage)
-                .into()
-        }
-
-        NickedConnect(nick) => system_message(nick, " has joined the chat."),
-        NickedDisconnect(nick) => system_message(nick, " has left the chat."),
-
-        NickedCommand(nick, command) => {
-            system_message(nick, &format!(" executed command: {}", command))
-        }
-
-        _ => system_message("ERROR: UNIMPLEMENTED", ""),
-    }
-}
-
-fn system_message(nick: &str, message: &str) -> Element<'static, AppMessage> {
-    let nick_text = Text::new(nick)
-        .size(14)
-        .color(Color::from_rgb8(248, 47, 58));
-    // set font
-
-    let message_text = Text::new(message)
-        .size(14)
-        .color(Color::from_rgb8(45, 45, 45));
-    // set font
-
-    let content = Row::new()
-        .align_items(Align::Center)
-        .height(Length::Shrink)
-        .width(Length::Shrink)
-        .spacing(0)
-        .padding(10)
-        .push(nick_text)
-        .push(message_text);
-
-    Container::new(content)
-        .height(Length::Shrink)
-        .width(Length::Shrink)
-        .style(style::Container::SystemMessage)
-        .into()
-}
-
-mod style {
-    use iced::{button, container, Background, Color, Vector};
-
-    pub enum Button {
-        Simple,
-    }
-
-    impl button::StyleSheet for Button {
-        fn active(&self) -> button::Style {
-            match self {
-                Button::Simple => button::Style {
-                    background: Some(Background::Color(Color::from_rgb(0.2, 0.2, 0.7))),
-                    border_radius: 10.0,
-                    text_color: Color::WHITE,
-                    ..button::Style::default()
-                },
-            }
-        }
-
-        fn hovered(&self) -> button::Style {
-            let active = self.active();
-
-            button::Style {
-                shadow_offset: active.shadow_offset + Vector::new(2.0, 2.0),
-                ..active
-            }
-        }
-    }
-
-    pub enum Container {
-        SystemMessage,
-        UserMessage,
-    }
-
-    impl container::StyleSheet for Container {
-        fn style(&self) -> container::Style {
-            let color = match self {
-                Container::SystemMessage => Color::from_rgb8(199, 243, 239),
-                Container::UserMessage => Color::from_rgb8(220, 220, 220),
-            };
-
-            container::Style {
-                background: Some(Background::Color(color)),
-                border_radius: 10.0,
-                ..container::Style::default()
-            }
         }
     }
 }
