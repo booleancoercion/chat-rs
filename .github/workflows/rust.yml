@@ -16,18 +16,80 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build (Ubuntu)
+    - name: Build library (Ubuntu)
       run: cargo build --verbose
-    - name: Run tests (Ubuntu)
+
+    - name: Build server (Ubuntu)
+      run: cargo build --verbose
+      working-directory: ./server
+        
+    - name: Build client_term (Ubuntu)
+      run: cargo build --verbose
+      working-directory: ./client_term
+
+    - name: Build client_gui (Ubuntu)
+      run: cargo build --verbose
+      working-directory: ./client_gui
+  
+  test_ubuntu:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Test library (Ubuntu)
       run: cargo test --verbose
+
+    - name: Test server (Ubuntu)
+      run: cargo test --verbose
+      working-directory: ./server
+        
+    - name: Test client_term (Ubuntu)
+      run: cargo test --verbose
+      working-directory: ./client_term
+
+    - name: Test client_gui (Ubuntu)
+      run: cargo test --verbose
+      working-directory: ./client_gui
   
   build_windows:
     
     runs-on: windows-latest
     
     steps:
-      - uses: actions/checkout@v2
-      - name: Build (Windows)
-        run: cargo build --verbose
-      - name: Run tests (Windows)
-        run: cargo test --verbose
+    - uses: actions/checkout@v2
+    - name: Build library (Windows)
+      run: cargo build --verbose
+
+    - name: Build server (Windows)
+      run: cargo build --verbose
+       working-directory: ./server
+        
+    - name: Build client_term (Windows)
+      run: cargo build --verbose
+      working-directory: ./client_term
+
+    - name: Build client_gui (Windows)
+      run: cargo build --verbose
+      working-directory: ./client_gui
+
+  test_windows:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Test library (Windows)
+      run: cargo test --verbose
+
+    - name: Test server (Windows)
+      run: cargo test --verbose
+      working-directory: ./server
+        
+    - name: Test client_term (Windows)
+      run: cargo test --verbose
+      working-directory: ./client_term
+
+    - name: Test client_gui (Windows)
+      run: cargo test --verbose
+      working-directory: ./client_gui
