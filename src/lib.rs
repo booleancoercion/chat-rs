@@ -13,11 +13,11 @@ use hkdf::Hkdf;
 use k256::{ecdh::EphemeralSecret, EncodedPoint};
 use rand_core::OsRng;
 use sha2::Sha256;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
 };
-use tokio::prelude::*;
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
@@ -92,7 +92,7 @@ pub trait SendMsg {
 
             buffer[0] = blocks;
 
-            for chunk in (&mut buffer[1..]).chunks_mut(16) {
+            for chunk in buffer[1..].chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
                 cipher.encrypt_block(block);
             }
@@ -145,7 +145,7 @@ pub trait ReceiveMsg {
 
             reader.read_exact(&mut buffer[1..(1 + blocks * 16)]).await?;
 
-            for chunk in (&mut buffer[1..]).chunks_mut(16) {
+            for chunk in buffer[1..].chunks_mut(16) {
                 let block = GenericArray::from_mut_slice(chunk);
                 cipher.decrypt_block(block);
             }
@@ -213,12 +213,12 @@ impl ChatStream {
             .expect("hk.expand got invalid length - this should never ever happen!");
 
         let key = GenericArray::from_slice(&key);
-        self.cipher = Some(Aes256::new(&key));
+        self.cipher = Some(Aes256::new(key));
         Ok(())
     }
 
     /// Convenience method for `TcpStream::peer_addr()`
-    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         self.inner.peer_addr()
     }
 

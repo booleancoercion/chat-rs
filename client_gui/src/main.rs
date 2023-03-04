@@ -4,10 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
 use iced::{
-    button, executor, scrollable, text_input, Align, Application,
-    Button, Column, Command, Container, Element,
-    HorizontalAlignment, Length, Row, Scrollable, Settings,
-    Subscription, Text, TextInput,
+    alignment::{Horizontal, Vertical},
+    button, executor, scrollable, text_input, Alignment, Application, Button, Column, Command,
+    Container, Element, Length, Row, Scrollable, Settings, Subscription, Text, TextInput,
 };
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -15,8 +14,8 @@ use tokio::sync::mpsc;
 use chat_rs::*;
 
 mod listen;
-mod style;
 mod messages;
+mod style;
 
 use listen::*;
 use messages::AppMessage;
@@ -127,8 +126,8 @@ impl Application for ChatClient {
                 }
             }
 
-            ChatClient::Connecting => match message {
-                AppMessage::Connected(stream) => {
+            ChatClient::Connecting => {
+                if let AppMessage::Connected(stream) = message {
                     let stream = stream.lock().unwrap().take().unwrap();
                     let peer_addr = stream.peer_addr().unwrap();
 
@@ -151,46 +150,37 @@ impl Application for ChatClient {
                         }
                     });
                 }
-                _ => {}
-            },
+            }
 
             ChatClient::Ready {
                 messages,
                 writer_channel,
                 state,
                 ..
-            } => {
-                match message {
-                    AppMessage::ChatMsg(msg) => {
-                        messages.push(msg);
-                        if !state.scroll.is_scroller_grabbed() {
-                            // UGLY: replace when PR lands
-                            state.scroll = unsafe {
-                                let mut tmp =
-                                    std::mem::transmute::<_, (Option<f32>, f32)>(state.scroll);
-                                tmp.1 = 999999.0;
-                                std::mem::transmute::<_, scrollable::State>(tmp)
-                            };
-                        }
+            } => match message {
+                AppMessage::ChatMsg(msg) => {
+                    messages.push(msg);
+                    if !state.scroll.is_scroller_grabbed() {
+                        state.scroll.snap_to(1.0);
                     }
-
-                    AppMessage::InputChanged(s) => state.input_value = s,
-                    AppMessage::Send => {
-                        let msg = Msg::UserMsg(state.input_value.drain(..).collect());
-                        let channel = writer_channel.clone();
-                        return Command::perform(
-                            async move {
-                                channel.send(msg).await?;
-
-                                Ok(())
-                            },
-                            AppMessage::or_error(AppMessage::Sent),
-                        );
-                    }
-
-                    _ => {}
                 }
-            }
+
+                AppMessage::InputChanged(s) => state.input_value = s,
+                AppMessage::Send => {
+                    let msg = Msg::UserMsg(state.input_value.drain(..).collect());
+                    let channel = writer_channel.clone();
+                    return Command::perform(
+                        async move {
+                            channel.send(msg).await?;
+
+                            Ok(())
+                        },
+                        AppMessage::or_error(AppMessage::Sent),
+                    );
+                }
+
+                _ => {}
+            },
         }
 
         Command::none()
@@ -203,16 +193,16 @@ impl Application for ChatClient {
                     .width(Length::Fill)
                     .size(100)
                     .color([0.5, 0.5, 0.5])
-                    .horizontal_alignment(HorizontalAlignment::Center);
+                    .horizontal_alignment(Horizontal::Center);
 
                 let error_text = Text::new(s.to_string())
                     .width(Length::Fill)
                     .size(50)
                     .color([1.0, 0.0, 0.0])
-                    .horizontal_alignment(HorizontalAlignment::Center);
+                    .horizontal_alignment(Horizontal::Center);
 
                 let col: Column<AppMessage> = Column::new()
-                    .align_items(Align::Center)
+                    .align_items(Alignment::Center)
                     .width(Length::Fill)
                     .padding(10)
                     .spacing(10)
@@ -238,7 +228,7 @@ impl Application for ChatClient {
                     .width(Length::Fill)
                     .size(100)
                     .color([0.5, 0.5, 0.5])
-                    .horizontal_alignment(HorizontalAlignment::Center);
+                    .horizontal_alignment(Horizontal::Center);
 
                 let addr_input = TextInput::new(
                     text_addr,
@@ -271,7 +261,7 @@ impl Application for ChatClient {
                     .push(addr_input)
                     .push(nick_input)
                     .push(button)
-                    .align_items(Align::Center);
+                    .align_items(Alignment::Center);
 
                 Container::new(content)
                     .width(Length::Fill)
@@ -286,7 +276,7 @@ impl Application for ChatClient {
                     .width(Length::Fill)
                     .size(100)
                     .color([0.5, 0.5, 0.5])
-                    .horizontal_alignment(HorizontalAlignment::Center);
+                    .horizontal_alignment(Horizontal::Center);
 
                 Container::new(title)
                     .width(Length::Fill)
@@ -308,7 +298,7 @@ impl Application for ChatClient {
                 ..
             } => {
                 let mut messages_scroll = Scrollable::new(scroll)
-                    .align_items(Align::Start)
+                    .align_items(Alignment::Start)
                     .height(Length::Fill)
                     .width(Length::Fill)
                     .spacing(5);
@@ -332,7 +322,7 @@ impl Application for ChatClient {
                     .on_press(AppMessage::Send);
 
                 let row = Row::new()
-                    .align_items(Align::Center)
+                    .align_items(Alignment::Center)
                     .width(Length::Fill)
                     .height(Length::Shrink)
                     .spacing(10)
@@ -340,7 +330,7 @@ impl Application for ChatClient {
                     .push(send_button);
 
                 let col = Column::new()
-                    .align_items(Align::Center)
+                    .align_items(Alignment::Center)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .spacing(10)
@@ -351,8 +341,8 @@ impl Application for ChatClient {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(15)
-                    .align_x(Align::Start)
-                    .align_y(Align::Start)
+                    .align_x(Horizontal::Left)
+                    .align_y(Vertical::Top)
                     .into()
             }
         }

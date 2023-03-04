@@ -1,11 +1,9 @@
 [package]
 name = "chat-rs"
-version = "1.0.1"
+version = "2.0.0"
 authors = ["boolean_coercion <booleancoercion@gmail.com>"]
-edition = "2018"
+edition = "2021"
 publish = false
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 aes = "0.6"
@@ -14,9 +12,9 @@ k256 = { version = "0.5", features = ["ecdh"] }
 hkdf = "0.10"
 sha2 = "0.9"
 anyhow = "1.0"
-tokio = { version = "0.3", features = ["net", "io-util"] }
+tokio = { version = "1.26", features = ["net", "io-util"] }
 async-trait = "0.1"
 
 [dev-dependencies.tokio]
-version = "0.3"
+version = "1.26"
 features = ["net", "macros", "rt", "rt-multi-thread"]

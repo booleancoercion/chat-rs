@@ -1,7 +1,7 @@
 use iced_futures::futures;
 use std::hash::Hash;
-use std::time::Instant;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::Mutex;
 
@@ -17,27 +17,23 @@ impl Listen {
         Self {
             // TODO: Find a more reliably unique value
             unique: Instant::now(),
-            reader: Arc::new(Mutex::new(reader))
+            reader: Arc::new(Mutex::new(reader)),
         }
     }
 
-    pub fn sub(&self) -> iced::Subscription<Msg>
-    {
+    pub fn sub(&self) -> iced::Subscription<Msg> {
         ListenSubscription::sub(self.reader.clone(), self.unique)
     }
 }
 
 pub struct ListenSubscription {
     unique: Instant,
-    reader: Arc<Mutex<ChatReaderHalf>>
+    reader: Arc<Mutex<ChatReaderHalf>>,
 }
 
 impl ListenSubscription {
     pub fn sub(reader: Arc<Mutex<ChatReaderHalf>>, unique: Instant) -> iced::Subscription<Msg> {
-        iced::Subscription::from_recipe(Self {
-            unique,
-            reader
-        })
+        iced::Subscription::from_recipe(Self { unique, reader })
     }
 }
 
@@ -56,18 +52,21 @@ where
         _input: futures::stream::BoxStream<'static, I>,
     ) -> futures::stream::BoxStream<'static, Self::Output> {
         let mut buffer = [0u8; MSG_LENGTH];
-        Box::pin(
-            futures::stream::unfold(self.reader.clone(), move |reader| async move {
+        Box::pin(futures::stream::unfold(
+            self.reader.clone(),
+            move |reader| async move {
                 let mut guard = reader.lock().await;
                 if let Ok(msg) = guard.receive_msg(&mut buffer).await {
                     drop(guard);
                     Some((msg, reader))
                 } else {
+                    // This allow is due to a false positive in this clippy lint
+                    #[allow(clippy::let_unit_value)]
                     let _: () = iced::futures::future::pending().await;
 
                     None
                 }
-            })
-        )
+            },
+        ))
     }
 }

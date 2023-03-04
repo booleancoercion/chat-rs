@@ -1,12 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use iced::{
-    Element, Text, Color, Align, Length, Container, Row, Column
-};
+use iced::{Alignment, Color, Column, Container, Element, Length, Row, Text};
 
-use chat_rs::*;
 use crate::style;
+use chat_rs::*;
 
 #[derive(Debug, Clone)]
 pub enum AppMessage {
@@ -45,7 +43,7 @@ pub fn visualise_msg(msg: &Msg) -> Element<'static, AppMessage> {
             let message_text = Text::new(message).size(14).color(Color::from_rgb8(0, 0, 0));
 
             let content = Column::new()
-                .align_items(Align::Start)
+                .align_items(Alignment::Start)
                 .height(Length::Shrink)
                 .width(Length::Shrink)
                 .spacing(10)
@@ -76,7 +74,7 @@ pub fn visualise_msg(msg: &Msg) -> Element<'static, AppMessage> {
             // set font
 
             let content = Row::new()
-                .align_items(Align::Center)
+                .align_items(Alignment::Center)
                 .height(Length::Shrink)
                 .width(Length::Shrink)
                 .spacing(0)
@@ -115,7 +113,7 @@ fn system_message(nick: &str, message: &str) -> Element<'static, AppMessage> {
     // set font
 
     let content = Row::new()
-        .align_items(Align::Center)
+        .align_items(Alignment::Center)
         .height(Length::Shrink)
         .width(Length::Shrink)
         .spacing(0)

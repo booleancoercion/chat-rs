@@ -5,16 +5,16 @@ use std::{
     process,
     sync::{
         atomic::{AtomicU16, Ordering},
-        Arc, Mutex
-    }
+        Arc, Mutex,
+    },
 };
 
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
+    execute, queue,
     style::{self, Attribute, Colorize},
     terminal::{self, ClearType},
-    execute, queue
 };
 use tokio::net::TcpStream;
 
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Connecting to {}:7878", address);
 
     let mut stream = connect_stream(address).await.unwrap_or_else(|err| {
-        eprintln!("Error on connecting: {}", err.to_string());
+        eprintln!("Error on connecting: {}", err);
         process::exit(1);
     });
     let nick = prompt_msg("Enter nickname: ")?;
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             process::exit(0)
         }
         Err(e) => {
-            println!("Error connecting to server: {}", e.to_string());
+            println!("Error connecting to server: {}", e);
             process::exit(0)
         }
     }
@@ -247,7 +247,7 @@ async fn handle_key_event(
                 cursor::MoveTo(x - 1, posy)
             )?;
             INPUT_ROWS.fetch_sub(1, Ordering::SeqCst);
-            draw_messages(&messages, stdout)?;
+            draw_messages(messages, stdout)?;
         } else {
             execute!(
                 stdout,
