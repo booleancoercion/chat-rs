@@ -5,11 +5,12 @@
 
 use std::net::SocketAddr;
 
-use aes::cipher::{generic_array::GenericArray, BlockCipher, NewBlockCipher};
-use aes::Aes256;
+use aes_gcm::aead::generic_array::GenericArray;
+use aes_gcm::aead::Aead;
+use aes_gcm::{AeadCore, AeadInPlace, Aes256Gcm, KeyInit};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
-use hkdf::Hkdf;
+use k256::PublicKey;
 use k256::{ecdh::EphemeralSecret, EncodedPoint};
 use rand_core::OsRng;
 use sha2::Sha256;
@@ -21,24 +22,24 @@ use tokio::net::{
 
 /// The default maximum message length used between the
 /// client and the server, according to BCMP.
-pub const MSG_LENGTH: usize = 513; // 1+512 for block header
+pub const MSG_LENGTH: usize = 512 + 2 + NONCE_SIZE; // 512 + crypto length header + nonce
+pub const NONCE_SIZE: usize = 12;
 pub const ECDH_PUBLIC_LEN: usize = 33;
 
 /// A struct representing a `TcpStream` belonging to a chat session.
 /// This struct contains methods useful for sending and receiving information
 /// using BCMP, and is highly recommended for working consistently between the
 /// server and the client.
-#[derive(Debug)]
 pub struct ChatStream {
     pub inner: TcpStream,
-    cipher: Option<Aes256>, // 256-bit key
+    cipher: Option<Aes256Gcm>, // 256-bit key
 }
 
 #[async_trait]
 pub trait SendMsg {
     type Writer: AsyncWrite + Unpin + Send;
 
-    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256>);
+    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256Gcm>);
 
     /// Send a message using the contained `TcpStream`, formatted according to
     /// BCMP, and returns a result which states if the operation was
@@ -68,9 +69,6 @@ pub trait SendMsg {
         let (writer, cipher) = self.get_writer_cipher();
 
         let mut buffer = Vec::with_capacity(MSG_LENGTH);
-        if cipher.is_some() {
-            buffer.push(0);
-        }
         buffer.extend(&msg.encode_header());
         buffer.extend(msg.string().as_bytes());
 
@@ -79,23 +77,11 @@ pub trait SendMsg {
         }
 
         if let Some(cipher) = cipher {
-            let msg_len = buffer.len() - 1;
-            let blocks = {
-                let temp = msg_len / 16;
-                if temp * 16 < msg_len {
-                    buffer.extend([0].repeat((temp + 1) * 16 - msg_len));
-                    temp + 1
-                } else {
-                    temp
-                }
-            } as u8;
+            let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+            cipher.encrypt_in_place(&nonce, &[], &mut buffer)?;
 
-            buffer[0] = blocks;
-
-            for chunk in buffer[1..].chunks_mut(16) {
-                let block = GenericArray::from_mut_slice(chunk);
-                cipher.encrypt_block(block);
-            }
+            writer.write_u16(buffer.len() as u16).await?;
+            writer.write_all(&nonce).await?;
         }
         writer.write_all(&buffer).await?;
         writer.flush().await?;
@@ -107,7 +93,7 @@ pub trait SendMsg {
 pub trait ReceiveMsg {
     type Reader: AsyncRead + Unpin + Send;
 
-    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256>);
+    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256Gcm>);
 
     /// Receive a BCMP formatted message, using the provided buffer
     /// as a means for memory efficiency. Buffer must be of length `MSG_LENGTH` at least.
@@ -132,39 +118,41 @@ pub trait ReceiveMsg {
     ///     Ok(())
     /// }
     /// ```
-    async fn receive_msg(&mut self, buffer: &mut [u8]) -> Result<Msg> {
+    async fn receive_msg(&mut self, mut buffer: &mut [u8]) -> Result<Msg> {
         let (reader, cipher) = self.get_reader_cipher();
 
-        let (code, length) = if let Some(cipher) = cipher {
-            reader.read_exact(&mut buffer[0..1]).await?;
-            let blocks = buffer[0] as usize;
+        if let Some(cipher) = cipher {
+            let clen = reader.read_u16().await? as usize;
 
-            if blocks * 16 + 1 > MSG_LENGTH {
-                bail!("Received invalid block amount (too big)");
+            if clen > MSG_LENGTH {
+                bail!("Received invalid cyphertext length (too big)");
             }
 
-            reader.read_exact(&mut buffer[1..(1 + blocks * 16)]).await?;
+            reader.read_exact(&mut buffer[..12]).await?;
+            let nonce;
+            (nonce, buffer) = buffer.split_at_mut(12);
+            let nonce = GenericArray::from_slice(nonce);
 
-            for chunk in buffer[1..].chunks_mut(16) {
-                let block = GenericArray::from_mut_slice(chunk);
-                cipher.decrypt_block(block);
-            }
+            reader.read_exact(&mut buffer[..clen]).await?;
 
-            Msg::parse_header(&buffer[1..4])
+            let plaintext = cipher.decrypt(nonce, &buffer[..clen])?;
+            buffer[..plaintext.len()].copy_from_slice(&plaintext);
         } else {
             reader.read_exact(&mut buffer[0..3]).await?;
-            Msg::parse_header(&buffer[0..3])
         };
+
+        let (code, length) = Msg::parse_header(&buffer[0..3]);
+        buffer = &mut buffer[3..];
 
         if length + 3 > MSG_LENGTH {
             bail!("Received invalid message length (too big)");
         }
 
         let string = if cipher.is_some() {
-            String::from_utf8_lossy(&buffer[4..length + 4]).to_string()
+            String::from_utf8_lossy(&buffer[..length]).to_string()
         } else {
-            reader.read_exact(&mut buffer[3..length + 3]).await?;
-            String::from_utf8_lossy(&buffer[3..length + 3]).to_string()
+            reader.read_exact(&mut buffer[..length]).await?;
+            String::from_utf8_lossy(&buffer[..length]).to_string()
         };
 
         match Msg::from_parts(code, string) {
@@ -194,7 +182,7 @@ impl ChatStream {
             return Ok(());
         }
         let my_secret = EphemeralSecret::random(&mut OsRng);
-        let my_public = EncodedPoint::from(&my_secret);
+        let my_public = EncodedPoint::from(&my_secret.public_key());
 
         let public_bytes = my_public.as_bytes(); // The length of this should be exactly ECDH_PUBLIC_LEN bytes
         self.inner.write_all(public_bytes).await?;
@@ -202,18 +190,17 @@ impl ChatStream {
 
         let mut other_public_bytes = [0u8; ECDH_PUBLIC_LEN];
         self.inner.read_exact(&mut other_public_bytes).await?;
-        let other_public = EncodedPoint::from_bytes(&other_public_bytes)?;
+        let other_public = PublicKey::from_sec1_bytes(&other_public_bytes)?;
 
-        let shared = my_secret.diffie_hellman(&other_public)?;
-        let shared_bytes = &shared.as_bytes()[..];
-        let hk = Hkdf::<Sha256>::new(None, shared_bytes);
+        let shared = my_secret.diffie_hellman(&other_public);
+        let hk = shared.extract::<Sha256>(None);
 
         let mut key = [0u8; 32];
         hk.expand(&[], &mut key)
             .expect("hk.expand got invalid length - this should never ever happen!");
 
         let key = GenericArray::from_slice(&key);
-        self.cipher = Some(Aes256::new(key));
+        self.cipher = Some(Aes256Gcm::new(key));
         Ok(())
     }
 
@@ -244,7 +231,7 @@ impl ChatStream {
 impl SendMsg for ChatStream {
     type Writer = TcpStream;
 
-    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256>) {
+    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256Gcm>) {
         (&mut self.inner, self.cipher.as_ref())
     }
 }
@@ -252,33 +239,33 @@ impl SendMsg for ChatStream {
 impl ReceiveMsg for ChatStream {
     type Reader = TcpStream;
 
-    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256>) {
+    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256Gcm>) {
         (&mut self.inner, self.cipher.as_ref())
     }
 }
 
 pub struct ChatReaderHalf {
     inner: OwnedReadHalf,
-    cipher: Option<Aes256>,
+    cipher: Option<Aes256Gcm>,
 }
 
 impl ReceiveMsg for ChatReaderHalf {
     type Reader = OwnedReadHalf;
 
-    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256>) {
+    fn get_reader_cipher(&mut self) -> (&mut Self::Reader, Option<&Aes256Gcm>) {
         (&mut self.inner, self.cipher.as_ref())
     }
 }
 
 pub struct ChatWriterHalf {
     inner: OwnedWriteHalf,
-    cipher: Option<Aes256>,
+    cipher: Option<Aes256Gcm>,
 }
 
 impl SendMsg for ChatWriterHalf {
     type Writer = OwnedWriteHalf;
 
-    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256>) {
+    fn get_writer_cipher(&mut self) -> (&mut Self::Writer, Option<&Aes256Gcm>) {
         (&mut self.inner, self.cipher.as_ref())
     }
 }
@@ -399,7 +386,7 @@ impl Msg {
     /// NOTE: This will read the header incorrectly when used with EBCMP!
     pub fn parse_header(header: &[u8]) -> (u8, usize) {
         let code = header[0];
-        let length = u16::from_le_bytes([header[1], header[2]]) as usize;
+        let length = u16::from_be_bytes([header[1], header[2]]) as usize;
 
         (code, length)
     }
@@ -408,7 +395,7 @@ impl Msg {
     pub fn encode_header(&self) -> [u8; 3] {
         let mut out = [0u8; 3];
         out[0] = self.code();
-        let le = (self.string().len() as u16).to_le_bytes();
+        let le = (self.string().len() as u16).to_be_bytes();
         out[1] = le[0];
         out[2] = le[1];
         out

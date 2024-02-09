@@ -23,8 +23,6 @@ A message can optionally contain a UTF-8 encoded string. Nicked messages (as in,
 ## Encrypted Protocol Extension
 For security and coherency reasons, encrypted messages are encoded in a slightly different way.
 
-First, the message is encoded as normal into bytes. Then, the number of *blocks* is determined, where a block is a sequence of exactly 16 bytes.
-If the *total* message length (i.e. including the header) is not evenly divisible by 16, padding bytes are included (this implementation uses zero-padding,
-any padding is fine).
+First, the message is encoded as normal into bytes. Then, encrypted using AES256-GCM with a random nonce. The data sent is 2 bytes containing the length of the ciphertext, followed by 12 bytes containing the nonce, followed by the ciphertext.
 
-The padded message is then encrypted using AES-256, and the number of blocks is appended to the beginning of the encrypted message as a single byte.
+### **This crate has not been audited, and is written for recreational purposes only. Do not rely on chat-rs for confidentiality.**
