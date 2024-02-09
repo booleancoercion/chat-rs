@@ -244,6 +244,12 @@ impl ReceiveMsg for ChatStream {
     }
 }
 
+impl std::fmt::Debug for ChatStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ChatStream")
+    }
+}
+
 pub struct ChatReaderHalf {
     inner: OwnedReadHalf,
     cipher: Option<Aes256Gcm>,
